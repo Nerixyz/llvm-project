@@ -433,6 +433,13 @@ void FunctionSignatureNode::outputPost(OutputBuffer &OB,
     OB << ")";
   }
 
+  outputQualifiers(OB);
+
+  if (!(Flags & OF_NoReturnType) && ReturnType)
+    ReturnType->outputPost(OB, Flags);
+}
+
+void FunctionSignatureNode::outputQualifiers(OutputBuffer &OB) const {
   if (Quals & Q_Const)
     OB << " const";
   if (Quals & Q_Volatile)
@@ -449,9 +456,6 @@ void FunctionSignatureNode::outputPost(OutputBuffer &OB,
     OB << " &";
   else if (RefQualifier == FunctionRefQualifier::RValueReference)
     OB << " &&";
-
-  if (!(Flags & OF_NoReturnType) && ReturnType)
-    ReturnType->outputPost(OB, Flags);
 }
 
 void ThunkSignatureNode::outputPre(OutputBuffer &OB, OutputFlags Flags) const {
@@ -461,6 +465,12 @@ void ThunkSignatureNode::outputPre(OutputBuffer &OB, OutputFlags Flags) const {
 }
 
 void ThunkSignatureNode::outputPost(OutputBuffer &OB, OutputFlags Flags) const {
+  outputThisAdjust(OB);
+
+  FunctionSignatureNode::outputPost(OB, Flags);
+}
+
+void ThunkSignatureNode::outputThisAdjust(OutputBuffer &OB) const {
   if (FunctionClass & FC_StaticThisAdjust) {
     OB << "`adjustor{" << ThisAdjust.StaticOffset << "}'";
   } else if (FunctionClass & FC_VirtualThisAdjust) {
@@ -473,8 +483,6 @@ void ThunkSignatureNode::outputPost(OutputBuffer &OB, OutputFlags Flags) const {
          << ThisAdjust.StaticOffset << "}'";
     }
   }
-
-  FunctionSignatureNode::outputPost(OB, Flags);
 }
 
 void PointerTypeNode::outputPre(OutputBuffer &OB, OutputFlags Flags) const {

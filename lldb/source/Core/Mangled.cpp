@@ -23,6 +23,7 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Demangle/Demangle.h"
+#include "llvm/Demangle/MicrosoftDemangle.h"
 #include "llvm/Support/Compiler.h"
 
 #include <mutex>
@@ -139,22 +140,125 @@ void Mangled::SetValue(ConstString name) {
   }
 }
 
-// Local helpers for different demangling implementations.
-static char *GetMSVCDemangledStr(llvm::StringRef M) {
-  char *demangled_cstr = llvm::microsoftDemangle(
-      M, nullptr, nullptr,
-      llvm::MSDemangleFlags(
-          llvm::MSDF_NoAccessSpecifier | llvm::MSDF_NoCallingConvention |
-          llvm::MSDF_NoMemberType | llvm::MSDF_NoVariableType));
+// Writes a space if the last token does not end with a punctuation.
+static void outputSpaceIfNecessary(OutputBuffer &OB) {
+  if (OB.empty())
+    return;
 
-  if (Log *log = GetLog(LLDBLog::Demangle)) {
-    if (demangled_cstr && demangled_cstr[0])
-      LLDB_LOGF(log, "demangled msvc: %s -> \"%s\"", M.data(), demangled_cstr);
-    else
-      LLDB_LOGF(log, "demangled msvc: %s -> error", M.data());
+  char C = OB.back();
+  if (std::isalnum(C) || C == '>')
+    OB << " ";
+}
+
+static void
+outputMsvcNameComponents(OutputBuffer &ob, llvm::ms_demangle::OutputFlags flags,
+                         DemangledNameInfo &ni,
+                         llvm::ms_demangle::QualifiedNameNode *node) {
+  using namespace llvm::ms_demangle;
+
+  if (node->Components->Count == 0)
+    return;
+
+  ni.ScopeRange.first = ob.getCurrentPosition();
+  for (size_t I = 0; I < node->Components->Count; ++I) {
+    if (I != 0)
+      ob << "::";
+
+    if (I == node->Components->Count - 1) {
+      ni.ScopeRange.second = ob.getCurrentPosition();
+      ni.BasenameRange.first = ob.getCurrentPosition();
+      auto *cur = node->Components->Nodes[I];
+      if (IdentifierNode *ident = llvm::dyn_cast<IdentifierNode>(cur)) {
+        // A node might have template parameters which we don't consider part of
+        // the basename. So take them out first and print the name without them.
+        auto *tmpl = std::exchange(ident->TemplateParams, nullptr);
+        ident->output(ob, flags);
+        ni.BasenameRange.second = ob.getCurrentPosition();
+
+        if (tmpl) {
+          ob << '<';
+          tmpl->output(ob, flags);
+          ob << '>';
+        }
+        ident->TemplateParams = tmpl;
+      } else {
+        cur->output(ob, flags);
+        ni.BasenameRange.second = ob.getCurrentPosition();
+      }
+    } else {
+      node->Components->Nodes[I]->output(ob, flags);
+    }
+  }
+}
+
+static void
+outputMsvcSignaturePost(OutputBuffer &ob, llvm::ms_demangle::OutputFlags flags,
+                        DemangledNameInfo &ni,
+                        llvm::ms_demangle::FunctionSignatureNode *node) {
+  using namespace llvm::ms_demangle;
+
+  if (auto *thunk = llvm::dyn_cast<ThunkSignatureNode>(node)) {
+    thunk->outputThisAdjust(ob);
   }
 
-  return demangled_cstr;
+  ob << "(";
+  ni.ArgumentsRange.first = ob.getCurrentPosition();
+  if (node->Params)
+    node->Params->output(ob, flags);
+  else
+    ob << "void";
+
+  if (node->IsVariadic) {
+    if (ob.back() != '(')
+      ob << ", ";
+    ob << "...";
+  }
+  ni.ArgumentsRange.second = ob.getCurrentPosition();
+  ob << ")";
+
+  ni.QualifiersRange.first = ob.getCurrentPosition();
+  node->outputQualifiers(ob);
+  ni.QualifiersRange.second = ob.getCurrentPosition();
+}
+
+// Local helpers for different demangling implementations.
+static std::pair<char *, std::optional<DemangledNameInfo>>
+GetDemangledMsvc(std::string_view M) {
+  using namespace llvm::ms_demangle;
+
+  Log *log = GetLog(LLDBLog::Demangle);
+  Demangler D;
+  std::string_view input = M;
+  SymbolNode *AST = D.parse(input);
+  if (D.Error || !AST) {
+    LLDB_LOGF(log, "demangle msvc: %s -> error", M.data());
+    return {nullptr, {}};
+  }
+  OutputFlags flags =
+      OutputFlags(OF_Default | OF_NoCallingConvention | OF_NoAccessSpecifier |
+                  OF_NoMemberType | OF_NoVariableType);
+
+  OutputBuffer ob;
+
+  if (AST->kind() != NodeKind::FunctionSymbol) {
+    // The symbol could be demangled, but we can't extract more info
+    AST->output(ob, flags);
+    ob += '\0';
+    LLDB_LOGF(log, "demangle msvc: %s is not a function symbol - demangled: %s",
+              M.data(), ob.getBuffer());
+    return {ob.getBuffer(), {}};
+  }
+
+  DemangledNameInfo ni;
+  FunctionSymbolNode *fn = static_cast<FunctionSymbolNode *>(AST);
+  fn->Signature->outputPre(ob, flags);
+  outputSpaceIfNecessary(ob);
+  outputMsvcNameComponents(ob, flags, ni, fn->Name);
+  outputMsvcSignaturePost(ob, flags, ni, fn->Signature);
+
+  ob += '\0';
+  LLDB_LOGF(log, "demangled msvc: %s -> \"%s\"", M.data(), ob.getBuffer());
+  return {ob.getBuffer(), ni};
 }
 
 static std::pair<char *, DemangledNameInfo>
@@ -252,12 +356,12 @@ bool Mangled::GetRichManglingInfo(RichManglingContext &context,
     // We have no rich mangling for MSVC-mangled names yet, so first try to
     // demangle it if necessary.
     if (!m_demangled && !m_mangled.GetMangledCounterpart(m_demangled)) {
-      if (char *d = GetMSVCDemangledStr(m_mangled)) {
+      if (char *d = GetDemangledMsvc(std::string_view{m_mangled}).first) {
         // Without the rich mangling info we have to demangle the full name.
         // Copy it to string pool and connect the counterparts to accelerate
         // later access in GetDemangledName().
-        m_demangled.SetStringWithMangledCounterpart(llvm::StringRef(d),
-                                                    m_mangled);
+        // m_demangled.SetStringWithMangledCounterpart(llvm::StringRef(d),
+        //                                             m_mangled);
         ::free(d);
       } else {
         m_demangled.SetCString("");
@@ -314,9 +418,14 @@ ConstString Mangled::GetDemangledNameImpl(bool force) const {
   // add it to our map.
   char *demangled_name = nullptr;
   switch (GetManglingScheme(m_mangled.GetStringRef())) {
-  case eManglingSchemeMSVC:
-    demangled_name = GetMSVCDemangledStr(m_mangled);
+  case eManglingSchemeMSVC: {
+    std::pair<char *, std::optional<DemangledNameInfo>> demangled =
+        GetDemangledMsvc(m_mangled.GetCString());
+    demangled_name = demangled.first;
+    if (demangled.second)
+      m_demangled_info.emplace(*std::move(demangled.second));
     break;
+  }
   case eManglingSchemeItanium: {
     std::pair<char *, DemangledNameInfo> demangled =
         GetItaniumDemangledStr(m_mangled.GetCString());
@@ -483,21 +592,21 @@ bool Mangled::Decode(const DataExtractor &data, lldb::offset_t *offset_ptr,
   m_demangled_info.reset();
   MangledEncoding encoding = (MangledEncoding)data.GetU8(offset_ptr);
   switch (encoding) {
-    case Empty:
-      return true;
+  case Empty:
+    return true;
 
-    case DemangledOnly:
-      m_demangled.SetString(strtab.Get(data.GetU32(offset_ptr)));
-      return true;
+  case DemangledOnly:
+    m_demangled.SetString(strtab.Get(data.GetU32(offset_ptr)));
+    return true;
 
-    case MangledOnly:
-      m_mangled.SetString(strtab.Get(data.GetU32(offset_ptr)));
-      return true;
+  case MangledOnly:
+    m_mangled.SetString(strtab.Get(data.GetU32(offset_ptr)));
+    return true;
 
-    case MangledAndDemangled:
-      m_mangled.SetString(strtab.Get(data.GetU32(offset_ptr)));
-      m_demangled.SetString(strtab.Get(data.GetU32(offset_ptr)));
-      return true;
+  case MangledAndDemangled:
+    m_mangled.SetString(strtab.Get(data.GetU32(offset_ptr)));
+    m_demangled.SetString(strtab.Get(data.GetU32(offset_ptr)));
+    return true;
   }
   return false;
 }
@@ -544,17 +653,17 @@ void Mangled::Encode(DataEncoder &file, ConstStringTable &strtab) const {
   }
   file.AppendU8(encoding);
   switch (encoding) {
-    case Empty:
-      break;
-    case DemangledOnly:
-      file.AppendU32(strtab.Add(m_demangled));
-      break;
-    case MangledOnly:
-      file.AppendU32(strtab.Add(m_mangled));
-      break;
-    case MangledAndDemangled:
-      file.AppendU32(strtab.Add(m_mangled));
-      file.AppendU32(strtab.Add(m_demangled));
-      break;
+  case Empty:
+    break;
+  case DemangledOnly:
+    file.AppendU32(strtab.Add(m_demangled));
+    break;
+  case MangledOnly:
+    file.AppendU32(strtab.Add(m_mangled));
+    break;
+  case MangledAndDemangled:
+    file.AppendU32(strtab.Add(m_mangled));
+    file.AppendU32(strtab.Add(m_demangled));
+    break;
   }
 }

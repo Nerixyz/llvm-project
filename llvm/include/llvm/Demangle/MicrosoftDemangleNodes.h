@@ -353,6 +353,8 @@ struct FunctionSignatureNode : public TypeNode {
   void outputPre(OutputBuffer &OB, OutputFlags Flags) const override;
   void outputPost(OutputBuffer &OB, OutputFlags Flags) const override;
 
+  void outputQualifiers(OutputBuffer &OB) const;
+
   static bool classof(const Node *N) {
     return N->kind() >= NodeKind::FunctionSignature &&
            N->kind() <= NodeKind::FunctionSignatureEnd;
@@ -513,6 +515,8 @@ struct ThunkSignatureNode : public FunctionSignatureNode {
 
   void outputPre(OutputBuffer &OB, OutputFlags Flags) const override;
   void outputPost(OutputBuffer &OB, OutputFlags Flags) const override;
+
+  void outputThisAdjust(OutputBuffer &OB) const;
 
   static bool classof(const Node *N) {
     return N->kind() == NodeKind::ThunkSignature;

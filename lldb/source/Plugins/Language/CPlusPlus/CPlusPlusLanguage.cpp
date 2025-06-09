@@ -128,6 +128,12 @@ ConstString CPlusPlusLanguage::GetDemangledFunctionNameWithoutArguments(
         shortname += cxx_method.GetBasename().str();
         return ConstString(shortname);
       }
+    } else if (mangled_name_cstr && mangled_name_cstr[0] == '?') {
+      const std::optional<DemangledNameInfo> &ni = mangled.GetDemangledInfo();
+      if (ni && ni->ScopeRange.first < ni->BasenameRange.second) {
+        return ConstString(mangled.GetDemangledName().GetStringRef().slice(
+            ni->ScopeRange.first, ni->BasenameRange.second));
+      }
     }
   }
   if (demangled_name)
@@ -242,11 +248,11 @@ GetDemangledBasename(const SymbolContext &sc) {
   if (!mangled)
     return std::nullopt;
 
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
+  if (mangled.GetDemangledName().IsEmpty())
     return std::nullopt;
 
   const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
   if (!info)
     return std::nullopt;
 
@@ -264,11 +270,11 @@ GetDemangledTemplateArguments(const SymbolContext &sc) {
   if (!mangled)
     return std::nullopt;
 
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
+  if (mangled.GetDemangledName().IsEmpty())
     return std::nullopt;
 
   const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
   if (!info)
     return std::nullopt;
 
@@ -289,11 +295,11 @@ GetDemangledReturnTypeLHS(const SymbolContext &sc) {
   if (!mangled)
     return std::nullopt;
 
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
+  if (mangled.GetDemangledName().IsEmpty())
     return std::nullopt;
 
   const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
   if (!info)
     return std::nullopt;
 
@@ -313,11 +319,11 @@ GetDemangledFunctionQualifiers(const SymbolContext &sc) {
   if (!mangled)
     return std::nullopt;
 
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
+  if (mangled.GetDemangledName().IsEmpty())
     return std::nullopt;
 
   const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
   if (!info)
     return std::nullopt;
 
@@ -338,11 +344,11 @@ GetDemangledReturnTypeRHS(const SymbolContext &sc) {
   if (!mangled)
     return std::nullopt;
 
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
+  if (mangled.GetDemangledName().IsEmpty())
     return std::nullopt;
 
   const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
   if (!info)
     return std::nullopt;
 
@@ -363,11 +369,11 @@ GetDemangledScope(const SymbolContext &sc) {
   if (!mangled)
     return std::nullopt;
 
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
+  if (mangled.GetDemangledName().IsEmpty())
     return std::nullopt;
 
   const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
   if (!info)
     return std::nullopt;
 
@@ -389,11 +395,11 @@ GetDemangledFunctionSuffix(const SymbolContext &sc) {
   if (!mangled)
     return std::nullopt;
 
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
+  if (mangled.GetDemangledName().IsEmpty())
     return std::nullopt;
 
   const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
   if (!info)
     return std::nullopt;
 
@@ -412,11 +418,11 @@ static bool PrintDemangledArgumentList(Stream &s, const SymbolContext &sc) {
   if (!mangled)
     return false;
 
-  auto demangled_name = mangled.GetDemangledName().GetStringRef();
-  if (demangled_name.empty())
+  if (mangled.GetDemangledName().IsEmpty())
     return false;
 
   const std::optional<DemangledNameInfo> &info = mangled.GetDemangledInfo();
+  auto demangled_name = mangled.GetDemangledName().GetStringRef();
   if (!info)
     return false;
 
