@@ -2,6 +2,7 @@ name: Build Windows CI Container
 
 permissions:
   contents: read
+  packages: write
 
 on:
   push:
@@ -27,6 +28,8 @@ jobs:
       container-name: ${{ steps.vars.outputs.container-name }}
       container-name-tag: ${{ steps.vars.outputs.container-name-tag }}
       container-filename: ${{ steps.vars.outputs.container-filename }}
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout LLVM
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
