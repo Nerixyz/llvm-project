@@ -95,7 +95,7 @@ EXCLUDE_WINDOWS = {
     "compiler-rt",  # TODO(issues/132798): Tests take excessive time.
     "openmp",  # TODO(issues/132799): Does not detect perl installation.
     "libc",  # No Windows Support.
-    "lldb",  # TODO(issues/132800): Needs environment setup.
+    # "lldb",  # TODO(issues/132800): Needs environment setup.
     "bolt",  # No Windows Support.
 }
 
