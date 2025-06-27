@@ -73,7 +73,7 @@ jobs:
     name: Build and Test Windows
     if: >-
         (github.event_name != 'pull_request' || github.event.action != 'closed')
-    runs-on: windows-2019
+    runs-on: ubuntu-latest
     container: ghcr.io/nerixyz/ci-windows-2019:latest
     defaults:
       run:
