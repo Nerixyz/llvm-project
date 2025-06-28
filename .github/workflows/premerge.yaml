@@ -72,6 +72,7 @@ jobs:
   premerge-checks-windows:
     name: Build and Test Windows
     if: >-
+        github.repository_owner == 'llvm' &&
         (github.event_name != 'pull_request' || github.event.action != 'closed')
     runs-on: ubuntu-latest
     container: ghcr.io/nerixyz/ci-windows-2019:latest
