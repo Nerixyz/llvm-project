@@ -185,6 +185,7 @@ class StdVectorDataFormatterTestCase(TestBase):
         self.do_test()
 
     @add_test_categories(["msvcstl"])
+    @expectedFailurePDB  # custom summary for std::int_vect doesn't work because typedef aren't preserved
     def test_msvcstl(self):
         # No flags, because the "msvcstl" category checks that the MSVC STL is used by default.
         self.build()
