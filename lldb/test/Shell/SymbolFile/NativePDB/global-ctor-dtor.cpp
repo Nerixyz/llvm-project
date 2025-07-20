@@ -18,7 +18,10 @@ int main() {
   return 0;
 }
 
-// CHECK:      struct A {
+// CHECK:      struct B {
+// CHECK-NEXT:     static A glob;
+// CHECK-NEXT: };
+// CHECK-NEXT: struct A {
 // CHECK-NEXT:     ~A();
 // CHECK-NEXT: };
 // CHECK-NEXT: A B::glob;
@@ -26,6 +29,3 @@ int main() {
 // CHECK-NEXT: static void B::`dynamic atexit destructor for 'glob'();
 // CHECK-NEXT: int main();
 // CHECK-NEXT: static void _GLOBAL__sub_I_global_ctor_dtor.cpp();
-// CHECK-NEXT: struct B {
-// CHECK-NEXT:     static A glob;
-// CHECK-NEXT: };

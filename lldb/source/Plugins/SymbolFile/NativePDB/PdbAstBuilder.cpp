@@ -38,16 +38,18 @@ struct CreateMethodDecl : public TypeVisitorCallbacks {
                    TypeIndex func_type_index,
                    clang::FunctionDecl *&function_decl,
                    lldb::opaque_compiler_type_t parent_ty,
-                   llvm::StringRef proc_name, CompilerType func_ct)
+                   llvm::StringRef proc_name, ConstString mangled_name,
+                   CompilerType func_ct)
       : m_index(m_index), m_clang(m_clang), func_type_index(func_type_index),
         function_decl(function_decl), parent_ty(parent_ty),
-        proc_name(proc_name), func_ct(func_ct) {}
+        proc_name(proc_name), mangled_name(mangled_name), func_ct(func_ct) {}
   PdbIndex &m_index;
   TypeSystemClang &m_clang;
   TypeIndex func_type_index;
   clang::FunctionDecl *&function_decl;
   lldb::opaque_compiler_type_t parent_ty;
   llvm::StringRef proc_name;
+  ConstString mangled_name;
   CompilerType func_ct;
 
   llvm::Error visitKnownMember(CVMemberRecord &cvr,
@@ -87,8 +89,8 @@ struct CreateMethodDecl : public TypeVisitorCallbacks {
     bool is_artificial = (options & MethodOptions::CompilerGenerated) ==
                          MethodOptions::CompilerGenerated;
     function_decl = m_clang.AddMethodToCXXRecordType(
-        parent_ty, proc_name,
-        /*mangled_name=*/nullptr, func_ct, /*access=*/access_type,
+        parent_ty, proc_name, mangled_name.GetCString(), func_ct,
+        /*access=*/access_type,
         /*is_virtual=*/is_virtual, /*is_static=*/is_static,
         /*is_inline=*/false, /*is_explicit=*/false,
         /*is_attr_used=*/false, /*is_artificial=*/is_artificial);
@@ -361,7 +363,7 @@ clang::DeclContext *PdbAstBuilder::GetParentDeclContext(PdbSymUid uid) {
   // that would be an infinite recursion.
   SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
-  PdbIndex& index = pdb->GetIndex();
+  PdbIndex &index = pdb->GetIndex();
   switch (uid.kind()) {
   case PdbSymUidKind::CompilandSym: {
     std::optional<PdbCompilandSymId> scope =
@@ -396,7 +398,8 @@ clang::DeclContext *PdbAstBuilder::GetParentDeclContext(PdbSymUid uid) {
     switch (global.kind()) {
     case SymbolKind::S_GDATA32:
     case SymbolKind::S_LDATA32:
-      return CreateDeclInfoForUndecoratedName(getSymbolName(global)).first;;
+      return CreateDeclInfoForUndecoratedName(getSymbolName(global)).first;
+      ;
     case SymbolKind::S_PROCREF:
     case SymbolKind::S_LPROCREF: {
       ProcRefSym ref{global.kind()};
@@ -644,9 +647,12 @@ clang::Decl *PdbAstBuilder::TryGetDecl(PdbSymUid uid) const {
 clang::NamespaceDecl *
 PdbAstBuilder::GetOrCreateNamespaceDecl(const char *name,
                                         clang::DeclContext &context) {
-  return m_clang.GetUniqueNamespaceDeclaration(
+  clang::NamespaceDecl *ns = m_clang.GetUniqueNamespaceDeclaration(
       IsAnonymousNamespaceName(name) ? nullptr : name, &context,
       OptionalClangModuleID());
+  m_known_namespaces.insert(ns);
+  m_parent_to_namespaces[&context].insert(ns);
+  return ns;
 }
 
 clang::BlockDecl *
@@ -669,14 +675,28 @@ PdbAstBuilder::GetOrCreateBlockDecl(PdbCompilandSymId block_id) {
 }
 
 clang::VarDecl *PdbAstBuilder::CreateVariableDecl(PdbSymUid uid, CVSymbol sym,
-                                                  clang::DeclContext &scope) {
+                                                  clang::DeclContext *scope) {
   VariableInfo var_info = GetVariableNameInfo(sym);
   clang::QualType qt = GetOrCreateType(var_info.type);
   if (qt.isNull())
     return nullptr;
 
+  // The DeclContext might be a struct/class - avoid creating a variable there,
+  // but create one in the next namespace/TU.
+  clang::RecordDecl *record;
+  std::string name;
+  while ((record = llvm::dyn_cast_or_null<clang::RecordDecl>(scope)) !=
+         nullptr) {
+    scope = scope->getParent();
+    assert(scope != nullptr);
+    llvm::raw_string_ostream os(name);
+    record->printName(os);
+    name.append("::");
+  }
+  name.append(DropNameScope(var_info.name));
+
   clang::VarDecl *var_decl = m_clang.CreateVariableDeclaration(
-      &scope, OptionalClangModuleID(), var_info.name.str().c_str(), qt);
+      scope, OptionalClangModuleID(), name.c_str(), qt);
 
   m_uid_to_decl[toOpaqueUid(uid)] = var_decl;
   DeclStatus status;
@@ -700,7 +720,7 @@ PdbAstBuilder::GetOrCreateVariableDecl(PdbCompilandSymId scope_id,
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
   PdbIndex &index = pdb->GetIndex();
   CVSymbol sym = index.ReadSymbolRecord(var_id);
-  return CreateVariableDecl(PdbSymUid(var_id), sym, *scope);
+  return CreateVariableDecl(PdbSymUid(var_id), sym, scope);
 }
 
 clang::VarDecl *PdbAstBuilder::GetOrCreateVariableDecl(PdbGlobalSymId var_id) {
@@ -711,8 +731,8 @@ clang::VarDecl *PdbAstBuilder::GetOrCreateVariableDecl(PdbGlobalSymId var_id) {
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
   PdbIndex &index = pdb->GetIndex();
   CVSymbol sym = index.ReadSymbolRecord(var_id);
-  auto context = FromCompilerDeclContext(GetTranslationUnitDecl());
-  return CreateVariableDecl(PdbSymUid(var_id), sym, *context);
+  auto *context = GetParentDeclContext(var_id);
+  return CreateVariableDecl(PdbSymUid(var_id), sym, context);
 }
 
 clang::TypedefNameDecl *
@@ -888,6 +908,11 @@ PdbAstBuilder::CreateFunctionDecl(PdbCompilandSymId func_id,
         tag_record = CVTagRecord::create(index.tpi().getType(*eti)).asTag();
       }
     }
+
+    ConstString mangled_name;
+    if (auto mangled_name_opt = pdb->FindMangledFunctionName(func_id))
+      mangled_name = ConstString(*mangled_name_opt);
+
     if (!tag_record.FieldList.isSimple()) {
       CVType field_list_cvt = index.tpi().getType(tag_record.FieldList);
       FieldListRecord field_list;
@@ -895,15 +920,15 @@ PdbAstBuilder::CreateFunctionDecl(PdbCompilandSymId func_id,
               field_list_cvt, field_list))
         llvm::consumeError(std::move(error));
       CreateMethodDecl process(index, m_clang, func_ti, function_decl,
-                               parent_opaque_ty, func_name, func_ct);
+                               parent_opaque_ty, func_name, mangled_name,
+                               func_ct);
       if (llvm::Error err = visitMemberRecordStream(field_list.Data, process))
         llvm::consumeError(std::move(err));
     }
 
     if (!function_decl) {
       function_decl = m_clang.AddMethodToCXXRecordType(
-          parent_opaque_ty, func_name,
-          /*mangled_name=*/nullptr, func_ct,
+          parent_opaque_ty, func_name, mangled_name.GetCString(), func_ct,
           /*access=*/lldb::AccessType::eAccessPublic,
           /*is_virtual=*/false, /*is_static=*/false,
           /*is_inline=*/false, /*is_explicit=*/false,
@@ -924,8 +949,7 @@ PdbAstBuilder::GetOrCreateInlinedFunctionDecl(PdbCompilandSymId inlinesite_id) {
   SymbolFileNativePDB *pdb = static_cast<SymbolFileNativePDB *>(
       m_clang.GetSymbolFile()->GetBackingSymbolFile());
   PdbIndex &index = pdb->GetIndex();
-  CompilandIndexItem *cii =
-      index.compilands().GetCompiland(inlinesite_id.modi);
+  CompilandIndexItem *cii = index.compilands().GetCompiland(inlinesite_id.modi);
   CVSymbol sym = cii->m_debug_stream.readSymbolAtOffset(inlinesite_id.offset);
   InlineSiteSym inline_site(static_cast<SymbolRecordKind>(sym.kind()));
   cantFail(SymbolDeserializer::deserializeAs<InlineSiteSym>(sym, inline_site));
@@ -1440,7 +1464,7 @@ PdbAstBuilder::ToCompilerDeclContext(clang::DeclContext &context) {
   return m_clang.CreateDeclContext(&context);
 }
 
-clang::Decl * PdbAstBuilder::FromCompilerDecl(CompilerDecl decl) {
+clang::Decl *PdbAstBuilder::FromCompilerDecl(CompilerDecl decl) {
   return ClangUtil::GetDecl(decl);
 }
 
@@ -1451,4 +1475,31 @@ PdbAstBuilder::FromCompilerDeclContext(CompilerDeclContext context) {
 
 void PdbAstBuilder::Dump(Stream &stream, llvm::StringRef filter) {
   m_clang.Dump(stream.AsRawOstream(), filter);
+}
+
+clang::NamespaceDecl *
+PdbAstBuilder::FindNamespaceDecl(const clang::DeclContext *parent,
+                                 llvm::StringRef name) {
+  NamespaceSet *set;
+  if (parent) {
+    auto pit = m_parent_to_namespaces.find(parent);
+    if (pit == m_parent_to_namespaces.end())
+      return nullptr;
+
+    set = &pit->second;
+  } else {
+    // In this case, search through all known namespaces
+    set = &m_known_namespaces;
+  }
+  assert(set);
+
+  for (clang::NamespaceDecl *namespace_decl : *set)
+    if (namespace_decl->getName() == name)
+      return namespace_decl;
+
+  for (clang::NamespaceDecl *namespace_decl : *set)
+    if (namespace_decl->isAnonymousNamespace())
+      return FindNamespaceDecl(namespace_decl, name);
+
+  return nullptr;
 }

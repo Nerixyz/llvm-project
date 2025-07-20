@@ -18,8 +18,8 @@
 #include "llvm/DebugInfo/PDB/PDBTypes.h"
 
 #include "CompileUnitIndex.h"
-#include "PdbIndex.h"
 #include "PdbAstBuilder.h"
+#include "PdbIndex.h"
 #include <optional>
 
 namespace clang {
@@ -140,6 +140,9 @@ public:
 
   std::optional<PdbCompilandSymId> FindSymbolScope(PdbCompilandSymId id);
 
+  std::optional<llvm::StringRef> FindMangledFunctionName(PdbCompilandSymId id);
+  std::optional<llvm::StringRef> FindMangledSymbol(SegmentOffset so);
+
   void FindTypes(const lldb_private::TypeQuery &match,
                  lldb_private::TypeResults &results) override;
 
@@ -179,7 +182,7 @@ private:
     std::shared_ptr<InlineFunctionInfo> inline_function_info;
     RangeSourceLineVector ranges;
     std::vector<lldb_private::LineTable::Entry> line_entries;
-    InlineSite(PdbCompilandSymId parent_id) : parent_id(parent_id){};
+    InlineSite(PdbCompilandSymId parent_id) : parent_id(parent_id) {};
   };
 
   void BuildParentMap();
@@ -210,9 +213,10 @@ private:
   lldb::TypeSP CreateArrayType(PdbTypeSymId type_id,
                                const llvm::codeview::ArrayRecord &ar,
                                CompilerType ct);
-  lldb::TypeSP CreateFunctionType(PdbTypeSymId type_id,
-                                  const llvm::codeview::MemberFunctionRecord &pr,
-                                  CompilerType ct);
+  lldb::TypeSP
+  CreateFunctionType(PdbTypeSymId type_id,
+                     const llvm::codeview::MemberFunctionRecord &pr,
+                     CompilerType ct);
   lldb::TypeSP CreateProcedureType(PdbTypeSymId type_id,
                                    const llvm::codeview::ProcedureRecord &pr,
                                    CompilerType ct);
@@ -258,6 +262,11 @@ private:
 
   void ParseInlineSite(PdbCompilandSymId inline_site_id, Address func_addr);
 
+  void CacheFunctionNames();
+  void CacheUtdLines();
+
+  Declaration ResolveUdtDeclaration(PdbTypeSymId type_id);
+
   llvm::BumpPtrAllocator m_allocator;
 
   lldb::addr_t m_obj_load_address = 0;
@@ -278,6 +287,18 @@ private:
   llvm::DenseMap<lldb::user_id_t, std::shared_ptr<InlineSite>> m_inline_sites;
   llvm::DenseMap<llvm::codeview::TypeIndex, llvm::codeview::TypeIndex>
       m_parent_types;
+
+  struct ModSourceLine {
+    uint16_t module;
+    uint32_t source_file;
+    uint32_t line;
+  };
+  llvm::DenseMap<llvm::codeview::TypeIndex, ModSourceLine> m_udt_source_lines;
+  bool m_cached_source_lines = false;
+
+  lldb_private::UniqueCStringMap<uint32_t> m_func_full_names;
+  lldb_private::UniqueCStringMap<uint32_t> m_func_base_names;
+  lldb_private::UniqueCStringMap<uint32_t> m_func_method_names;
 };
 
 } // namespace npdb
