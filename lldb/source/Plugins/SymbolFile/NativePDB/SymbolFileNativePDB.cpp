@@ -1741,6 +1741,34 @@ void SymbolFileNativePDB::FindTypes(const lldb_private::TypeQuery &query,
         return;
     }
   }
+
+  // We didn't find enough matches, search for typedefs
+  CacheTypedefBasenames();
+  matches.clear();
+  m_typedef_base_names.GetValues(query.GetTypeBasename(), matches);
+  for (uint32_t match_idx : matches) {
+    auto cvs = m_index->ReadSymbolRecord(PdbGlobalSymId(match_idx, false));
+    if (cvs.kind() != S_UDT)
+      continue;
+
+    UDTSym udt = llvm::cantFail(SymbolDeserializer::deserializeAs<UDTSym>(cvs));
+    if (!IsTypedefUDT(udt))
+      continue;
+
+    std::vector context = GetContextForUDT(udt);
+    if (context.empty())
+      continue;
+
+    if (query.ContextMatches(context)) {
+      TypeSP type_sp = GetOrCreateTypedef(PdbGlobalSymId(match_idx, false));
+      if (!type_sp)
+        continue;
+
+      results.InsertUnique(type_sp);
+      if (results.Done(query))
+        return;
+    }
+  }
 }
 
 void SymbolFileNativePDB::FindTypesByName(llvm::StringRef name,
@@ -1784,16 +1812,10 @@ size_t SymbolFileNativePDB::ParseTypes(CompileUnit &comp_unit) {
       continue;
 
     UDTSym udt = llvm::cantFail(SymbolDeserializer::deserializeAs<UDTSym>(sym));
-    bool is_typedef = true;
-    if (IsTagRecord(PdbTypeSymId{udt.Type, false}, m_index->tpi())) {
-      CVType cvt = m_index->tpi().getType(udt.Type);
-      llvm::StringRef name = CVTagRecord::create(cvt).name();
-      if (name == udt.Name)
-        is_typedef = false;
-    }
+    if (!IsTypedefUDT(udt))
+      continue;
 
-    if (is_typedef)
-      GetOrCreateTypedef(global);
+    GetOrCreateTypedef(global);
   }
 
   const size_t new_count = GetTypeList().GetSize();
@@ -2440,4 +2462,53 @@ SymbolFileNativePDB::GetContextForType(TypeIndex ti) {
     break;
   }
   return ctx;
+}
+
+std::vector<CompilerContext>
+SymbolFileNativePDB::GetContextForUDT(const UDTSym &udt) {
+  std::optional<Type::ParsedName> parsed_name =
+      Type::GetTypeScopeAndBasename(udt.Name);
+  if (!parsed_name)
+    return {{CompilerContextKind::Typedef, ConstString(udt.Name)}};
+
+  // UDTs are not in an enclosing record (these are LF_NESTTYPE),
+  // so all names must be namespaces
+  std::vector<CompilerContext> contexts;
+  for (llvm::StringRef scope : parsed_name->scope) {
+    contexts.emplace_back(CompilerContextKind::Namespace, ConstString(scope));
+  }
+  contexts.emplace_back(CompilerContextKind::Typedef,
+                        ConstString(parsed_name->basename));
+
+  return contexts;
+}
+
+bool SymbolFileNativePDB::IsTypedefUDT(const UDTSym &udt) {
+  if (IsTagRecord(PdbTypeSymId{udt.Type, false}, m_index->tpi())) {
+    CVType cvt = m_index->tpi().getType(udt.Type);
+    llvm::StringRef name = CVTagRecord::create(cvt).name();
+    if (name == udt.Name)
+      return false;
+  }
+  return true;
+}
+
+void SymbolFileNativePDB::CacheTypedefBasenames() {
+  if (m_cached_typedef_basenames)
+    return;
+  m_cached_typedef_basenames = true;
+
+  for (const uint32_t gid : m_index->globals().getGlobalsTable()) {
+    PdbGlobalSymId global{gid, false};
+    CVSymbol sym = m_index->ReadSymbolRecord(global);
+    if (sym.kind() != S_UDT)
+      continue;
+
+    UDTSym udt = llvm::cantFail(SymbolDeserializer::deserializeAs<UDTSym>(sym));
+    ConstString basename(MSVCUndecoratedNameParser::DropScope(udt.Name));
+    m_typedef_base_names.Append(basename, gid);
+  }
+
+  // Sort the map for lookup later (Append doesn't keep order)
+  m_typedef_base_names.Sort();
 }

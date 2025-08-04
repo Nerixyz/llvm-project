@@ -259,6 +259,12 @@ private:
   void ParseInlineSite(PdbCompilandSymId inline_site_id, Address func_addr);
 
   std::vector<CompilerContext> GetContextForType(llvm::codeview::TypeIndex ti);
+  std::vector<CompilerContext>
+  GetContextForUDT(const llvm::codeview::UDTSym &udt);
+
+  bool IsTypedefUDT(const llvm::codeview::UDTSym &udt);
+
+  void CacheTypedefBasenames();
 
   llvm::BumpPtrAllocator m_allocator;
 
@@ -282,6 +288,10 @@ private:
       m_parent_types;
 
   lldb_private::UniqueCStringMap<uint32_t> m_type_base_names;
+
+  // Typedefs are symbols, not types, so we need to handle them separately
+  lldb_private::UniqueCStringMap<uint32_t> m_typedef_base_names;
+  bool m_cached_typedef_basenames = false;
 };
 
 } // namespace npdb

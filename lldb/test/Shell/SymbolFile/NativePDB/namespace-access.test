@@ -24,6 +24,7 @@ namespace Outer {
     };
 
     namespace Inner2 {
+      using T = Outer::Inner1::S;
       struct S {
         char a[4];
       };
@@ -58,6 +59,7 @@ int main(int argc, char **argv) {
   Outer::Inner2::S oi2s;
   A a1;
   Outer::A a2;
+  Outer::Inner1::Inner2::T oi1i2t;
   return sizeof(s) + sizeof(os) + sizeof(oi1s) + sizeof(oi1i2s) + sizeof(oi2s) + sizeof(a1) + sizeof(a2);
 }
 
@@ -77,6 +79,7 @@ type lookup Outer::Inner2::S
 type lookup Outer::A
 type lookup A
 type lookup ::A
+type lookup T
 # Test that Clang can find the namespaces as well
 expr sizeof(S)
 expr sizeof(::S)
@@ -137,6 +140,10 @@ quit
 # CHECK-NEXT: (lldb) type lookup ::A
 # CHECK-NEXT: struct A {
 # CHECK-NEXT:     char a[7];
+# CHECK-NEXT: }
+# CHECK-NEXT: (lldb) type lookup T
+# CHECK-NEXT: struct S {
+# CHECK-NEXT:     char a[3];
 # CHECK-NEXT: }
 # CHECK-NEXT: (lldb) expr sizeof(S) 
 # CHECK-NEXT: (__size_t) $0 = 1
