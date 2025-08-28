@@ -114,6 +114,14 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    "--no-rtti",
+    dest="no_rtti",
+    action="store_true",
+    default=False,
+    help="When specified, disable RTTI.",
+)
+
+parser.add_argument(
     "--opt",
     dest="opt",
     default="none",
@@ -292,6 +300,7 @@ class Builder(object):
         self.output = args.output
         self.mode = args.mode
         self.nodefaultlib = args.nodefaultlib
+        self.no_rtti = args.no_rtti
         self.verbose = args.verbose
         self.obj_ext = obj_ext
         self.lib_paths = args.libs_dir
@@ -672,6 +681,8 @@ class MsvcBuilder(Builder):
         if self.nodefaultlib:
             args.append("/GS-")
             args.append("/GR-")
+        if self.no_rtti:
+            args.append("/GR-")
         args.append("/Z7")
         if self.toolchain_type == "clang-cl":
             args.append("-Xclang")
@@ -763,6 +774,8 @@ class GccBuilder(Builder):
         if self.nodefaultlib:
             args.append("-nostdinc")
             args.append("-static")
+        if self.no_rtti:
+            args.append("-fno-rtti")
         args.append("-c")
 
         if sys.platform == "darwin":
@@ -946,6 +959,7 @@ if args.verbose:
     print("  Outdir: " + args.outdir)
     print("  Output: " + args.output)
     print("  Nodefaultlib: " + str(args.nodefaultlib))
+    print("  Nortti: " + str(args.no_rtti))
     print("  Opt: " + args.opt)
     print("  Mode: " + args.mode)
     print("  Clean: " + str(args.clean))

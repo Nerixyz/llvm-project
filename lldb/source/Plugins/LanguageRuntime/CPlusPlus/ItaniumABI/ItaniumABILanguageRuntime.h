@@ -91,13 +91,34 @@ protected:
                                                bool for_expressions,
                                                bool is_internal);
 
-private:
-  typedef std::map<lldb_private::Address, TypeAndOrName> DynamicTypeCache;
-  typedef std::map<lldb_private::Address, VTableInfo> VTableInfoCache;
+  llvm::Expected<LanguageRuntime::VTableInfo>
+  GetVTableInfoWithOffset(ValueObject &in_value, bool check_type,
+                          int64_t offset);
+
+  virtual bool IsVTableSymbolName(llvm::StringRef demangledName) const;
+
+  /// Removes the vtable indicator from a demangled symbol.
+  ///
+  /// For example `vtable for Foo::Bar` -> `Foo::Bar`
+  ///
+  /// \param[in] demangledName The demangled name of the vtable symbol
+  /// \returns The class name of the vtable
+  virtual llvm::StringRef
+  StripVTableSymbolName(llvm::StringRef demangledName) const;
+
+  virtual std::optional<int64_t>
+  GetOffsetToTop(const VTableInfo &vtable_info, ValueObject &in_value,
+                 const CompilerType &dynamic_type);
 
   ItaniumABILanguageRuntime(Process *process)
       : // Call CreateInstance instead.
         lldb_private::CPPLanguageRuntime(process) {}
+
+  static bool ShouldUseMicrosoftABI(Process *process);
+
+private:
+  typedef std::map<lldb_private::Address, TypeAndOrName> DynamicTypeCache;
+  typedef std::map<lldb_private::Address, VTableInfo> VTableInfoCache;
 
   lldb::BreakpointSP m_cxx_exception_bp_sp;
   DynamicTypeCache m_dynamic_type_map;

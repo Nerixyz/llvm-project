@@ -1,0 +1,183 @@
+# REQUIRES: target-windows
+
+# Test dynamic type lookup.
+# RUN: split-file %s %t
+# RUN: %build --compiler=msvc -o %t.exe -- %t/main.cpp
+# RUN: env LLDB_USE_NATIVE_PDB_READER=1 %lldb -f %t.exe -s %t/commands.input 2>&1 | FileCheck %s
+# RUN: %build --compiler=msvc --no-rtti -o %t.exe -- %t/main.cpp
+# RUN: env LLDB_USE_NATIVE_PDB_READER=1 %lldb -f %t.exe -s %t/commands.input 2>&1 | FileCheck %s
+# RUN: %build --compiler=clang-cl -o %t.exe -- %t/main.cpp
+# RUN: env LLDB_USE_NATIVE_PDB_READER=1 %lldb -f %t.exe -s %t/commands.input 2>&1 | FileCheck %s
+# RUN: %build --compiler=clang-cl --no-rtti -o %t.exe -- %t/main.cpp
+# RUN: env LLDB_USE_NATIVE_PDB_READER=1 %lldb -f %t.exe -s %t/commands.input 2>&1 | FileCheck %s
+
+#--- main.cpp
+
+struct Base1 {
+  virtual ~Base1() = default;
+  int base1 = 1;
+};
+struct Base2 {
+  virtual ~Base2() = default;
+  int base2 = 2;
+};
+
+struct Single : public Base1 {
+  int single = 3;
+};
+struct Multiple : public Base1, public Base2 {
+  int multiple = 4;
+};
+
+struct VBase {
+  virtual ~VBase() = default;
+  int vbase = 5;
+};
+struct VBaseUser1 : public virtual VBase {
+  int vbase_user1 = 6;
+};
+struct VBaseUser2 : public virtual VBase {
+  int vbase_user2 = 7;
+};
+
+struct VBaseDuoUser : public VBaseUser1, public VBaseUser2 {
+  int vbase_duo_user = 8;
+};
+
+struct MultiWrap1 : public Multiple {
+  int multi_wrap1 = 9;
+};
+struct MultiWrap2 : public Multiple {
+  int multi_wrap2 = 10;
+};
+
+struct Combined : public MultiWrap1, public VBaseDuoUser, public MultiWrap2, public Single {
+  int combined = 11;
+};
+
+int main() {
+  auto *single = new Single;
+  Base1 *single_base1 = single;
+
+  // --------------------------
+
+  auto *multi = new Multiple;
+  Base1 *multi_base1 = multi;
+  Base2 *multi_base2 = multi;
+
+  // --------------------------
+
+  auto *vbuser = new VBaseDuoUser;
+  VBase *vbuser_vbase = vbuser;
+
+  // --------------------------
+
+  auto *combined = new Combined;
+
+  MultiWrap1 *combined_mw1 = combined;
+  Multiple *combined_mw1_multi = combined_mw1;
+  Base1 *combined_mw1_multi_b1 = combined_mw1_multi;
+  Base2 *combined_mw1_multi_b2 = combined_mw1_multi;
+
+  VBaseDuoUser *combined_vbuser = combined;
+  VBase *combined_vbuser_vbase = combined_vbuser;
+
+  MultiWrap2 *combined_mw2 = combined;
+  Multiple *combined_mw2_multi = combined_mw2;
+  Base1 *combined_mw2_multi_b1 = combined_mw2_multi;
+  Base2 *combined_mw2_multi_b2 = combined_mw2_multi;
+
+  Single *combined_single = combined;
+  Base1 *combined_single_base1 = combined_single;
+
+  return 0; // break here
+}
+
+#--- commands.input
+
+break set -p "break here"
+r
+
+fr v -d no-dynamic-values single
+fr v single
+fr v single_base1
+
+fr v -d no-dynamic-values multi
+fr v multi
+fr v multi_base1
+fr v multi_base2
+
+fr v -d no-dynamic-values vbuser
+fr v vbuser
+fr v vbuser_vbase
+
+fr v -d no-dynamic-values combined
+fr v combined
+
+fr v combined_mw1
+fr v combined_mw1_multi
+fr v combined_mw1_multi_b1
+fr v combined_mw1_multi_b2
+
+fr v combined_vbuser
+fr v combined_vbuser_vbase
+
+fr v combined_mw2
+fr v combined_mw2_multi
+fr v combined_mw2_multi_b1
+fr v combined_mw2_multi_b2
+
+fr v combined_single
+fr v combined_single_base1
+
+# CHECK:      (lldb) fr v -d no-dynamic-values single
+# CHECK-NEXT: Single *) single = [[ADDR_SINGLE:0x[a-f0-9]+]]
+# CHECK-NEXT: (lldb) fr v single
+# CHECK-NEXT: Single *) single = [[ADDR_SINGLE]]
+# CHECK-NEXT: (lldb) fr v single_base1
+# CHECK-NEXT: Single *) single_base1 = [[ADDR_SINGLE]]
+
+# CHECK-NEXT: (lldb) fr v -d no-dynamic-values multi
+# CHECK-NEXT: Multiple *) multi = [[ADDR_MULTI:0x[a-f0-9]+]]
+# CHECK-NEXT: (lldb) fr v multi
+# CHECK-NEXT: Multiple *) multi = [[ADDR_MULTI]]
+# CHECK-NEXT: (lldb) fr v multi_base1
+# CHECK-NEXT: Multiple *) multi_base1 = [[ADDR_MULTI]]
+# CHECK-NEXT: (lldb) fr v multi_base2
+# CHECK-NEXT: Multiple *) multi_base2 = [[ADDR_MULTI]]
+
+# CHECK-NEXT: (lldb) fr v -d no-dynamic-values vbuser
+# CHECK-NEXT: VBaseDuoUser *) vbuser = [[ADDR_VBUSER:0x[a-f0-9]+]]
+# CHECK-NEXT: (lldb) fr v vbuser
+# CHECK-NEXT: VBaseDuoUser *) vbuser = [[ADDR_VBUSER]]
+# CHECK-NEXT: (lldb) fr v vbuser_vbase
+# CHECK-NEXT: VBaseDuoUser *) vbuser_vbase = [[ADDR_VBUSER]]
+
+# CHECK-NEXT: (lldb) fr v -d no-dynamic-values combined
+# CHECK-NEXT: Combined *) combined = [[ADDR_COMBINED:0x[a-f0-9]+]]
+# CHECK-NEXT: (lldb) fr v combined
+# CHECK-NEXT: Combined *) combined = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_mw1
+# CHECK-NEXT: Combined *) combined_mw1 = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_mw1_multi
+# CHECK-NEXT: Combined *) combined_mw1_multi = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_mw1_multi_b1
+# CHECK-NEXT: Combined *) combined_mw1_multi_b1 = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_mw1_multi_b2
+# CHECK-NEXT: Combined *) combined_mw1_multi_b2 = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_vbuser
+# CHECK-NEXT: Combined *) combined_vbuser = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_vbuser_vbase
+# CHECK-NEXT: Combined *) combined_vbuser_vbase = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_mw2
+# CHECK-NEXT: Combined *) combined_mw2 = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_mw2_multi
+# CHECK-NEXT: Combined *) combined_mw2_multi = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_mw2_multi_b1
+# CHECK-NEXT: Combined *) combined_mw2_multi_b1 = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_mw2_multi_b2
+# CHECK-NEXT: Combined *) combined_mw2_multi_b2 = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_single
+# CHECK-NEXT: Combined *) combined_single = [[ADDR_COMBINED]]
+# CHECK-NEXT: (lldb) fr v combined_single_base1
+# CHECK-NEXT: Combined *) combined_single_base1 = [[ADDR_COMBINED]]

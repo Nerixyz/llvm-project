@@ -73,8 +73,7 @@ TypeAndOrName ItaniumABILanguageRuntime::GetTypeInfo(
                 in_value.GetTypeName().GetCString(), symbol_name.str().c_str());
       // We are a C++ class, that's good.  Get the class name and look it
       // up:
-      llvm::StringRef class_name = symbol_name;
-      class_name.consume_front(vtable_demangled_prefix);
+      llvm::StringRef class_name = StripVTableSymbolName(symbol_name);
       // We know the class name is absolute, so tell FindTypes that by
       // prefixing it with the root namespace:
       std::string lookup_name("::");
@@ -205,6 +204,12 @@ llvm::Error ItaniumABILanguageRuntime::TypeHasVTable(CompilerType type) {
   return llvm::Error::success();
 }
 
+llvm::Expected<LanguageRuntime::VTableInfo>
+ItaniumABILanguageRuntime::GetVTableInfo(ValueObject &in_value,
+                                         bool check_type) {
+  return GetVTableInfoWithOffset(in_value, check_type, 0);
+}
+
 // This function can accept both pointers or references to classes as well as
 // instances of classes. If you are using this function during dynamic type
 // detection, only valid ValueObjects that return true to
@@ -213,8 +218,9 @@ llvm::Error ItaniumABILanguageRuntime::TypeHasVTable(CompilerType type) {
 // and is can pass in instances of classes which is not suitable for dynamic
 // type detection, these cases should pass true for \a check_type.
 llvm::Expected<LanguageRuntime::VTableInfo>
- ItaniumABILanguageRuntime::GetVTableInfo(ValueObject &in_value,
-                                          bool check_type) {
+ItaniumABILanguageRuntime::GetVTableInfoWithOffset(ValueObject &in_value,
+                                                   bool check_type,
+                                                   int64_t offset) {
 
   CompilerType type = in_value.GetCompilerType();
   if (check_type) {
@@ -234,6 +240,8 @@ llvm::Expected<LanguageRuntime::VTableInfo>
   if (original_ptr == LLDB_INVALID_ADDRESS || address_type != eAddressTypeLoad)
     return llvm::createStringError(std::errc::invalid_argument,
                                    "failed to get the address of the value");
+
+  original_ptr += offset;
 
   Status error;
   lldb::addr_t vtable_load_addr =
@@ -269,7 +277,7 @@ llvm::Expected<LanguageRuntime::VTableInfo>
                                    "no symbol found for 0x%" PRIx64,
                                    vtable_load_addr);
   llvm::StringRef name = symbol->GetMangled().GetDemangledName().GetStringRef();
-  if (name.starts_with(vtable_demangled_prefix)) {
+  if (IsVTableSymbolName(name)) {
     VTableInfo info = {vtable_addr, symbol};
     std::lock_guard<std::mutex> locker(m_mutex);
     auto pos = m_vtable_info_map[vtable_addr] = info;
@@ -278,6 +286,17 @@ llvm::Expected<LanguageRuntime::VTableInfo>
   return llvm::createStringError(std::errc::invalid_argument,
       "symbol found that contains 0x%" PRIx64 " is not a vtable symbol",
       vtable_load_addr);
+}
+
+bool ItaniumABILanguageRuntime::IsVTableSymbolName(
+    llvm::StringRef demangledName) const {
+  return demangledName.starts_with(vtable_demangled_prefix);
+}
+
+llvm::StringRef ItaniumABILanguageRuntime::StripVTableSymbolName(
+    llvm::StringRef demangledName) const {
+  demangledName.consume_front(vtable_demangled_prefix);
+  return demangledName;
 }
 
 bool ItaniumABILanguageRuntime::GetDynamicTypeAndAddress(
@@ -331,33 +350,44 @@ bool ItaniumABILanguageRuntime::GetDynamicTypeAndAddress(
     return false;
   }
 
+  auto offset_to_top = GetOffsetToTop(vtable_info, in_value, type);
+  if (!offset_to_top)
+    return false;
+
+  // So the dynamic type is a value that starts at offset_to_top above
+  // the original address.
+  lldb::addr_t dynamic_addr =
+      in_value.GetPointerValue().address + *offset_to_top;
+  if (!m_process->GetTarget().ResolveLoadAddress(dynamic_addr,
+                                                 dynamic_address)) {
+    dynamic_address.SetRawAddress(dynamic_addr);
+  }
+  return true;
+}
+
+std::optional<int64_t> ItaniumABILanguageRuntime::GetOffsetToTop(
+    const VTableInfo &vtable_info, ValueObject & /* in_value */,
+    const CompilerType & /* dynamic_type */) {
   // The offset_to_top is two pointers above the vtable pointer.
   Target &target = m_process->GetTarget();
   const addr_t vtable_load_addr = vtable_info.addr.GetLoadAddress(&target);
   if (vtable_load_addr == LLDB_INVALID_ADDRESS)
-    return false;
+    return std::nullopt;
   const uint32_t addr_byte_size = m_process->GetAddressByteSize();
   const lldb::addr_t offset_to_top_location =
       vtable_load_addr - 2 * addr_byte_size;
   // Watch for underflow, offset_to_top_location should be less than
   // vtable_load_addr
   if (offset_to_top_location >= vtable_load_addr)
-    return false;
+    return std::nullopt;
   Status error;
   const int64_t offset_to_top = target.ReadSignedIntegerFromMemory(
       offset_to_top_location, addr_byte_size, INT64_MIN, error);
 
   if (offset_to_top == INT64_MIN)
-    return false;
-  // So the dynamic type is a value that starts at offset_to_top above
-  // the original address.
-  lldb::addr_t dynamic_addr =
-      in_value.GetPointerValue().address + offset_to_top;
-  if (!m_process->GetTarget().ResolveLoadAddress(
-          dynamic_addr, dynamic_address)) {
-    dynamic_address.SetRawAddress(dynamic_addr);
-  }
-  return true;
+    return std::nullopt;
+
+  return offset_to_top;
 }
 
 TypeAndOrName ItaniumABILanguageRuntime::FixUpDynamicType(
@@ -397,9 +427,9 @@ TypeAndOrName ItaniumABILanguageRuntime::FixUpDynamicType(
 LanguageRuntime *
 ItaniumABILanguageRuntime::CreateInstance(Process *process,
                                           lldb::LanguageType language) {
-  // FIXME: We have to check the process and make sure we actually know that
-  // this process supports
-  // the Itanium ABI.
+  if (ShouldUseMicrosoftABI(process))
+    return nullptr;
+
   if (language == eLanguageTypeC_plus_plus ||
       language == eLanguageTypeC_plus_plus_03 ||
       language == eLanguageTypeC_plus_plus_11 ||
@@ -407,6 +437,10 @@ ItaniumABILanguageRuntime::CreateInstance(Process *process,
     return new ItaniumABILanguageRuntime(process);
   else
     return nullptr;
+}
+
+bool ItaniumABILanguageRuntime::ShouldUseMicrosoftABI(Process *process) {
+  return process->GetTarget().GetArchitecture().GetTriple().isOSWindows();
 }
 
 class CommandObjectMultiwordItaniumABI_Demangle : public CommandObjectParsed {
