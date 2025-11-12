@@ -491,3 +491,68 @@ bool CPPLanguageRuntime::IsSymbolARuntimeThunk(const Symbol &symbol) {
   return mangled_name.starts_with("_ZTh") || mangled_name.starts_with("_ZTv") ||
          mangled_name.starts_with("_ZTc");
 }
+
+bool CPPLanguageRuntime::ShouldUseMicrosoftABI(Process *process) {
+  return process->GetTarget().GetArchitecture().GetTriple().isOSWindows();
+}
+
+TypeAndOrName
+CPPLanguageRuntime::FixUpDynamicType(const TypeAndOrName &type_and_or_name,
+                                     ValueObject &static_value) {
+  CompilerType static_type(static_value.GetCompilerType());
+  Flags static_type_flags(static_type.GetTypeInfo());
+
+  TypeAndOrName ret(type_and_or_name);
+  if (type_and_or_name.HasType()) {
+    // The type will always be the type of the dynamic object.  If our parent's
+    // type was a pointer, then our type should be a pointer to the type of the
+    // dynamic object.  If a reference, then the original type should be
+    // okay...
+    CompilerType orig_type = type_and_or_name.GetCompilerType();
+    CompilerType corrected_type = orig_type;
+    if (static_type_flags.AllSet(eTypeIsPointer))
+      corrected_type = orig_type.GetPointerType();
+    else if (static_type_flags.AllSet(eTypeIsReference))
+      corrected_type = orig_type.GetLValueReferenceType();
+    ret.SetCompilerType(corrected_type);
+  } else {
+    // If we are here we need to adjust our dynamic type name to include the
+    // correct & or * symbol
+    std::string corrected_name(type_and_or_name.GetName().GetCString());
+    if (static_type_flags.AllSet(eTypeIsPointer))
+      corrected_name.append(" *");
+    else if (static_type_flags.AllSet(eTypeIsReference))
+      corrected_name.append(" &");
+    // the parent type should be a correctly pointer'ed or referenc'ed type
+    ret.SetCompilerType(static_type);
+    ret.SetName(corrected_name.c_str());
+  }
+  return ret;
+}
+
+llvm::Error CPPLanguageRuntime::TypeHasVTable(CompilerType type) {
+  // Check to make sure the class has a vtable.
+  CompilerType original_type = type;
+  if (type.IsPointerOrReferenceType()) {
+    CompilerType pointee_type = type.GetPointeeType();
+    if (pointee_type)
+      type = pointee_type;
+  }
+
+  // Make sure this is a class or a struct first by checking the type class
+  // bitfield that gets returned.
+  if ((type.GetTypeClass() & (eTypeClassStruct | eTypeClassClass)) == 0) {
+    return llvm::createStringError(
+        std::errc::invalid_argument,
+        "type \"%s\" is not a class or struct or a pointer to one",
+        original_type.GetTypeName().AsCString("<invalid>"));
+  }
+
+  // Check if the type has virtual functions by asking it if it is polymorphic.
+  if (!type.IsPolymorphicClass()) {
+    return llvm::createStringError(std::errc::invalid_argument,
+                                   "type \"%s\" doesn't have a vtable",
+                                   type.GetTypeName().AsCString("<invalid>"));
+  }
+  return llvm::Error::success();
+}

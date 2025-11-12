@@ -81,9 +81,23 @@ public:
 
   bool IsSymbolARuntimeThunk(const Symbol &symbol) override;
 
+  TypeAndOrName FixUpDynamicType(const TypeAndOrName &type_and_or_name,
+                                 ValueObject &static_value) override;
+
+  static bool ShouldUseMicrosoftABI(Process *process);
+
 protected:
   // Classes that inherit from CPPLanguageRuntime can see and modify these
   CPPLanguageRuntime(Process *process);
+
+  // Check if a compiler type has a vtable.
+  //
+  // If the compiler type is a pointer or a reference, this function will check
+  // if the pointee type has a vtable, else it will check the type passed in.
+  //
+  // Returns an error if the type of the value doesn't have a vtable with an
+  // explanation why, or returns an Error::success() if the type has a vtable.
+  llvm::Error TypeHasVTable(CompilerType type);
 
 private:
   using OperatorStringToCallableInfoMap =

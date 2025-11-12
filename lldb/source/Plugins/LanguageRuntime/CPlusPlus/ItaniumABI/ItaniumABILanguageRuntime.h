@@ -57,9 +57,6 @@ public:
                                 Address &address, Value::ValueType &value_type,
                                 llvm::ArrayRef<uint8_t> &local_buffer) override;
 
-  TypeAndOrName FixUpDynamicType(const TypeAndOrName &type_and_or_name,
-                                 ValueObject &static_value) override;
-
   bool CouldHaveDynamicValue(ValueObject &in_value) override;
 
   void SetExceptionBreakpoints() override;
@@ -114,8 +111,6 @@ protected:
       : // Call CreateInstance instead.
         lldb_private::CPPLanguageRuntime(process) {}
 
-  static bool ShouldUseMicrosoftABI(Process *process);
-
 private:
   typedef std::map<lldb_private::Address, TypeAndOrName> DynamicTypeCache;
   typedef std::map<lldb_private::Address, VTableInfo> VTableInfoCache;
@@ -132,15 +127,6 @@ private:
 
   void SetDynamicTypeInfo(const lldb_private::Address &vtable_addr,
                           const TypeAndOrName &type_info);
-
-  // Check if a compiler type has a vtable.
-  //
-  // If the compiler type is a pointer or a reference, this function will check
-  // if the pointee type has a vtable, else it will check the type passed in.
-  //
-  // Returns an error if the type of the value doesn't have a vtable with an
-  // explanation why, or returns an Error::success() if the type has a vtable.
-  llvm::Error TypeHasVTable(CompilerType compiler_type);
 };
 
 } // namespace lldb_private

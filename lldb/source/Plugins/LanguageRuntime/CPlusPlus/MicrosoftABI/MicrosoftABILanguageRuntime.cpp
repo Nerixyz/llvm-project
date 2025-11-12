@@ -78,8 +78,7 @@ void MicrosoftABILanguageRuntime::Terminate() {
 bool MicrosoftABILanguageRuntime::IsVTableSymbolName(
     llvm::StringRef demangledName) const {
   return demangledName.contains(vftable_demangled_indicator) ||
-         demangledName.contains(vbtable_demangled_indicator) ||
-         ItaniumABILanguageRuntime::IsVTableSymbolName(demangledName);
+         demangledName.contains(vbtable_demangled_indicator);
 }
 
 llvm::StringRef MicrosoftABILanguageRuntime::StripVTableSymbolName(
@@ -88,8 +87,7 @@ llvm::StringRef MicrosoftABILanguageRuntime::StripVTableSymbolName(
   if (indicator_idx == llvm::StringRef::npos)
     indicator_idx = demangledName.find(vbtable_demangled_indicator);
   if (indicator_idx == llvm::StringRef::npos)
-    // Not a MS vtable symbol - might be Itanium one
-    return ItaniumABILanguageRuntime::StripVTableSymbolName(demangledName);
+    return llvm::StringRef();
 
   demangledName = demangledName.slice(0, indicator_idx);
   demangledName.consume_front(vtable_demangled_prefix);
@@ -245,62 +243,4 @@ std::optional<int64_t> MicrosoftABILanguageRuntime::GetOffsetUsingRTTI(
   }
 
   return -offset_from_top;
-}
-
-std::optional<int64_t> MicrosoftABILanguageRuntime::GetOffsetUsingAST(
-    const VTableInfo &vtable_info, const CompilerType &dynamic_type) {
-  // We can't infer the chain of bases we went through just from the symbol name,
-  // because that only includes some key classes (to keep the symbol name small).
-  // Here we use Clang to find all paths to base classes including the chain of 
-  // bases to mangle. This chain is then matched against the name we got.
-
-  auto mangled = vtable_info.symbol->GetName();
-  auto components = GetVFTableComponents(mangled);
-
-  auto clang = dynamic_type.GetTypeSystem().dyn_cast_or_null<TypeSystemClang>();
-  if (!clang)
-    return std::nullopt;
-
-  auto address_byte_size =
-      static_cast<int64_t>(m_process->GetAddressByteSize());
-  auto align_offset = [=](int64_t offset) {
-    if ((offset % address_byte_size) == 0)
-      return offset;
-    return offset + (address_byte_size - (offset % address_byte_size));
-  };
-
-  const clang::CXXRecordDecl *record_decl =
-      clang->GetAsCXXRecordDecl(dynamic_type.GetOpaqueQualType());
-  clang::ASTContext &ast_ctx = record_decl->getASTContext();
-  clang::MicrosoftVTableContext vtable_context(ast_ctx);
-  const auto &vftables = vtable_context.getVFPtrOffsets(record_decl);
-  if (vftables.empty())
-    return std::nullopt;
-  if (vftables.size() == 1) {
-    // If there's only one path, that one shouldn't have any component.
-    // It should look like "const C::`vftable'"
-    assert(components.empty());
-    return -align_offset(vftables.front()->FullOffsetInMDC.getQuantity());
-  }
-
-  auto *it = llvm::find_if(vftables, [&](const auto &vptr) {
-    if (vptr->MangledPath.size() != components.size())
-      return false;
-
-    std::string qual_name;
-    for (const auto &[base_record, component] :
-         llvm::zip(vptr->MangledPath, components)) {
-      llvm::raw_string_ostream os(qual_name);
-      base_record->printQualifiedName(os, ast_ctx.getPrintingPolicy());
-      if (qual_name != component)
-        return false;
-      qual_name.clear();
-    }
-    return true;
-  });
-
-  if (it != vftables.end())
-    return -align_offset((*it)->FullOffsetInMDC.getQuantity());
-
-  return std::nullopt;
 }
