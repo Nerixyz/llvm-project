@@ -895,11 +895,17 @@ clang::FunctionDecl *PdbAstBuilderClang::CreateFunctionDecl(
 
     CVType cvt = index.tpi().getType(func_ti);
     MemberFunctionRecord func_record(static_cast<TypeRecordKind>(cvt.kind()));
-    llvm::cantFail(TypeDeserializer::deserializeAs<MemberFunctionRecord>(
-        cvt, func_record));
+    llvm::Error err =
+        TypeDeserializer::deserializeAs<MemberFunctionRecord>(cvt, func_record);
+    if (err) {
+      llvm::consumeError(std::move(err));
+      return nullptr;
+    }
     TypeIndex class_index = func_record.getClassType();
 
     CVType parent_cvt = index.tpi().getType(class_index);
+    if (!IsTagRecord(parent_cvt))
+      return nullptr;
     TagRecord tag_record = CVTagRecord::create(parent_cvt).asTag();
     // If it's a forward reference, try to get the real TypeIndex.
     if (tag_record.isForwardRef()) {
@@ -1069,6 +1075,8 @@ PdbAstBuilderClang::GetOrCreateFunctionDecl(PdbCompilandSymId func_id) {
 
   const clang::FunctionProtoType *func_type =
       llvm::dyn_cast<clang::FunctionProtoType>(qt);
+  if (!func_type)
+    return nullptr;
 
   CompilerType func_ct = ToCompilerType(qt);
 
@@ -1237,8 +1245,12 @@ clang::QualType PdbAstBuilderClang::CreateFunctionType(
   TpiStream &stream = index.tpi();
   CVType args_cvt = stream.getType(args_type_idx);
   ArgListRecord args;
-  llvm::cantFail(
-      TypeDeserializer::deserializeAs<ArgListRecord>(args_cvt, args));
+  llvm::Error err =
+      TypeDeserializer::deserializeAs<ArgListRecord>(args_cvt, args);
+  if (err) {
+    llvm::consumeError(std::move(err));
+    return {};
+  }
 
   llvm::ArrayRef<TypeIndex> arg_indices = llvm::ArrayRef(args.ArgIndices);
   bool is_variadic = IsCVarArgsFunction(arg_indices);
