@@ -190,6 +190,10 @@ TpiStream::findFullDeclForForwardRef(TypeIndex ForwardRefTI) const {
 
   uint32_t BucketIdx = ForwardTRH->FullRecordHash % Header->NumHashBuckets;
 
+  // There might be multiple types with the same unique name for a forward
+  // reference (e.g. after incremental linking). Use the type index with the
+  // highest type index in that case.
+  TypeIndex MaxTI = ForwardRefTI;
   for (TypeIndex TI : HashMap[BucketIdx]) {
     CVType CVT = Types->getType(TI);
     if (CVT.kind() != F.kind())
@@ -205,16 +209,16 @@ TpiStream::findFullDeclForForwardRef(TypeIndex ForwardRefTI) const {
 
     if (!ForwardTR.hasUniqueName()) {
       if (ForwardTR.getName() == FullTR.getName())
-        return TI;
+        MaxTI = std::max(TI, MaxTI);
       continue;
     }
 
     if (!FullTR.hasUniqueName())
       continue;
     if (ForwardTR.getUniqueName() == FullTR.getUniqueName())
-      return TI;
+      MaxTI = std::max(TI, MaxTI);
   }
-  return ForwardRefTI;
+  return MaxTI;
 }
 
 codeview::CVType TpiStream::getType(codeview::TypeIndex Index) {
