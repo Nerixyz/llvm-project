@@ -10,13 +10,18 @@ from lldbsuite.test import lldbutil
 
 
 class ValueMD5CrashTestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+    SHARED_BUILD_TESTCASE = False
+
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
         # Find the line number to break at.
         self.line = line_number("main.cpp", "// break here")
 
-    @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr24663")
+    @expectedFailureAll(
+        oslist=["windows"], debug_info=["dwarf"], bugnumber="llvm.org/pr24663"
+    )
     def test_with_run_command(self):
         """Verify that the hash computing logic for ValueObject's values can't crash us."""
         self.build()

@@ -42,6 +42,8 @@ enum class CallingConvention : uint8_t;
 namespace lldb_private {
 namespace npdb {
 
+struct CVTagRecord;
+
 struct DeclStatus {
   DeclStatus() = default;
   DeclStatus(lldb::user_id_t uid, bool resolved)
@@ -114,8 +116,7 @@ private:
   clang::QualType
   CreateModifierType(const llvm::codeview::ModifierRecord &modifier);
   clang::QualType CreateArrayType(const llvm::codeview::ArrayRecord &array);
-  clang::QualType CreateRecordType(PdbTypeSymId id,
-                                   const llvm::codeview::TagRecord &record);
+  clang::QualType CreateRecordType(PdbTypeSymId id, const CVTagRecord &record);
   clang::QualType CreateEnumType(PdbTypeSymId id,
                                  const llvm::codeview::EnumRecord &record);
   clang::QualType

@@ -14,6 +14,7 @@
 #include "CPPLanguageRuntime.h"
 #include "CommandObjectCPlusPlus.h"
 #include "ItaniumABIRuntime.h"
+#include "MicrosoftABIRuntime.h"
 #include "VerboseTrapFrameRecognizer.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -123,6 +124,8 @@ CPPLanguageRuntime::CPPLanguageRuntime(Process *process)
     RegisterVerboseTrapFrameRecognizer(*process);
   }
   m_abi_runtimes.emplace_back(std::make_unique<ItaniumABIRuntime>(process));
+  if (process->GetTarget().GetArchitecture().GetTriple().isOSWindows())
+    m_abi_runtimes.emplace_back(std::make_unique<MicrosoftABIRuntime>(process));
 }
 
 bool CPPLanguageRuntime::IsAllowedRuntimeValue(ConstString name) {

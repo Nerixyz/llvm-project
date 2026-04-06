@@ -10,6 +10,9 @@ from lldbsuite.test import lldbutil
 
 
 class DynamicValueChildCountTestCase(TestBase):
+    TEST_WITH_PDB_DEBUG_INFO = True
+    SHARED_BUILD_TESTCASE = False
+
     def setUp(self):
         # Call super's setUp().
         TestBase.setUp(self)
@@ -30,7 +33,9 @@ class DynamicValueChildCountTestCase(TestBase):
         )
 
     @add_test_categories(["pyapi"])
-    @expectedFailureAll(oslist=["windows"], bugnumber="llvm.org/pr24663")
+    @expectedFailureAll(
+        oslist=["windows"], debug_info=["dwarf"], bugnumber="llvm.org/pr24663"
+    )
     def test_get_dynamic_vals(self):
         """Test fetching C++ dynamic values from pointers & references."""
         """Get argument vals for the call stack when stopped on a breakpoint."""

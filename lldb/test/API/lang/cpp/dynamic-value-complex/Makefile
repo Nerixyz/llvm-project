@@ -1,4 +1,4 @@
-CXX_SOURCES := pass-to-base.cpp anonymous-b.cpp forward-a.cpp
+CXX_SOURCES := main.cpp
 
 ifeq "$(OS)" "Windows_NT"
 	ifneq "$(MAKE_PDB)" "YES"
