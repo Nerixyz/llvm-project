@@ -64,6 +64,13 @@ except ImportError:
 // Parameter types will be used in the autodoc string.
 %feature("autodoc", "1");
 
+// Enable type annotations (requires SWIG 5.5).
+%feature("python:annotations", "typing");
+// Exclude operator==/!=. These are inherited from object and SWIG's type
+// annotations are wrong there.
+%feature("python:annotations", "0") operator==;
+%feature("python:annotations", "0") operator!=;
+
 // Include lldb-python first as it sets Py_LIMITED_API.
 %begin %{
 #include "../source/Plugins/ScriptInterpreter/Python/lldb-python.h"
