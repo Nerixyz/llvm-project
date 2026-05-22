@@ -75,9 +75,12 @@ namespace {
 lldb::ValueObjectSP GetCapturedThisValueObject(StackFrame *frame) {
   assert(frame);
 
-  if (auto thisValSP = frame->FindVariable(ConstString("this")))
+  if (auto thisValSP = frame->FindVariable(ConstString("this"))) {
     if (auto thisThisValSP = thisValSP->GetChildMemberWithName("this"))
       return thisThisValSP;
+    if (auto codeview_this_sp = thisValSP->GetChildMemberWithName("__this"))
+      return codeview_this_sp;
+  }
 
   return nullptr;
 }

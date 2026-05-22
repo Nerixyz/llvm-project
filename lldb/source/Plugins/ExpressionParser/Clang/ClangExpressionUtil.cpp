@@ -17,9 +17,12 @@ namespace ClangExpressionUtil {
 lldb::ValueObjectSP GetLambdaValueObject(StackFrame *frame) {
   assert(frame);
 
-  if (auto this_val_sp = frame->FindVariable(ConstString("this")))
+  if (auto this_val_sp = frame->FindVariable(ConstString("this"))) {
     if (this_val_sp->GetChildMemberWithName("this"))
       return this_val_sp;
+    if (this_val_sp->GetChildMemberWithName("__this"))
+      return this_val_sp;
+  }
 
   return nullptr;
 }
