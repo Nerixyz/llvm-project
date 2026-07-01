@@ -43,15 +43,8 @@ private:
   TypeAndOrName GetTypeInfo(ValueObject &in_value,
                             const LanguageRuntime::VTableInfo &vtable_info);
 
-  TypeAndOrName GetDynamicTypeInfo(const lldb_private::Address &vtable_addr);
-
-  void SetDynamicTypeInfo(const lldb_private::Address &vtable_addr,
-                          const TypeAndOrName &type_info);
-
-  using DynamicTypeCache = std::map<Address, TypeAndOrName>;
   using VTableInfoCache = std::map<Address, LanguageRuntime::VTableInfo>;
 
-  DynamicTypeCache m_dynamic_type_map;
   VTableInfoCache m_vtable_info_map;
 };
 
