@@ -168,7 +168,7 @@ CV_TYPE(LF_DIMCONLU, 0x1208)
 CV_TYPE(LF_DIMVARU, 0x1209)
 CV_TYPE(LF_DIMVARLU, 0x120a)
 
-CV_TYPE(LF_RANGELIST, 0x120c)
+TYPE_RECORD(LF_RANGELIST, 0x120c, RangeList)
 
 // Member type records. These are generally not length prefixed, and appear
 // inside of a field list record.
@@ -199,9 +199,10 @@ CV_TYPE(LF_MODIFIER_EX, 0x1518)
 CV_TYPE(LF_VECTOR, 0x151b)
 CV_TYPE(LF_MATRIX, 0x151c)
 
-CV_TYPE(LF_TAGGED_UNION, 0x151e)
-CV_TYPE(LF_TAGGED_UNION_CASE, 0x151f)
-CV_TYPE(LF_TUCASE, 0x1520)
+TYPE_RECORD(LF_TAGGED_UNION, 0x151e, TaggedUnion)
+TYPE_RECORD(LF_TAGGED_UNION_CASE, 0x151f, TaggedUnionCase)
+MEMBER_RECORD(LF_TUCASE, 0x1520, TUCase)
+MEMBER_RECORD(LF_TAG_RANGE, 0x1521, TagRange)
 CV_TYPE(LF_IFC_RECORD, 0x1522)
 
 // ID leaf records. Subsequent leaf types may be referenced from .debug$S.

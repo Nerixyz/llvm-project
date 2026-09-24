@@ -206,6 +206,15 @@ static uint32_t handleListContinuation(ArrayRef<uint8_t> Data, uint32_t Offset,
   return 8;
 }
 
+static uint32_t handleTUCase(ArrayRef<uint8_t> Data, uint32_t Offset,
+                             SmallVectorImpl<TiReference> &Refs) {
+  // 0: Padding
+  // 2: TypeIndex
+  // 6: Name
+  Refs.push_back({TiRefKind::TypeRef, Offset + 2, 1});
+  return 6 + getCStringLength(Data.drop_front(6));
+}
+
 static void handleFieldList(ArrayRef<uint8_t> Content,
                             SmallVectorImpl<TiReference> &Refs) {
   uint32_t Offset = 0;
@@ -245,6 +254,9 @@ static void handleFieldList(ArrayRef<uint8_t> Content,
       break;
     case LF_INDEX:
       ThisLen = handleListContinuation(Content, Offset, Refs);
+      break;
+    case LF_TUCASE:
+      ThisLen = handleTUCase(Content, Offset, Refs);
       break;
     default:
       return;
@@ -330,10 +342,15 @@ static void discoverTypeIndices(ArrayRef<uint8_t> Content, TypeLeafKind Kind,
     Refs.push_back({TiRefKind::TypeRef, 4, 3});
     break;
   case TypeLeafKind::LF_UNION:
+  case TypeLeafKind::LF_TAGGED_UNION:
     Refs.push_back({TiRefKind::TypeRef, 4, 1});
     break;
   case TypeLeafKind::LF_ENUM:
     Refs.push_back({TiRefKind::TypeRef, 4, 2});
+    break;
+  case TypeLeafKind::LF_TAGGED_UNION_CASE:
+    Refs.push_back({TiRefKind::TypeRef, 2, 1});
+    Refs.push_back({TiRefKind::TypeRef, 12, 1});
     break;
   case TypeLeafKind::LF_BITFIELD:
     Refs.push_back({TiRefKind::TypeRef, 0, 1});

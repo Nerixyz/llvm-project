@@ -515,6 +515,107 @@ struct UnionRecord : public TagRecord {
   uint64_t Size = 0;
 };
 
+// LF_TAGGED_UNION
+struct TaggedUnionRecord : TypeRecord {
+  TaggedUnionRecord() = default;
+  explicit TaggedUnionRecord(TypeRecordKind Kind) : TypeRecord(Kind) {}
+  TaggedUnionRecord(uint16_t MemberCount, ClassOptions32 Options,
+                    TypeIndex FieldList, uint64_t Size, StringRef Name,
+                    StringRef UniqueName)
+      : TypeRecord(TypeRecordKind::TaggedUnion), Options(Options),
+        FieldList(FieldList), Name(Name), UniqueName(UniqueName),
+        MemberCount(MemberCount), Size(Size) {}
+
+  bool hasUniqueName() const {
+    return (Options & ClassOptions32::HasUniqueName) != ClassOptions32::None;
+  }
+
+  uint64_t getSize() const { return Size; }
+
+  ClassOptions getOptions() const {
+    return static_cast<ClassOptions>(to_underlying(Options));
+  }
+
+  StringRef getName() const { return Name; }
+
+  StringRef getUniqueName() const { return UniqueName; }
+
+  ClassOptions32 Options = ClassOptions32::None;
+  TypeIndex FieldList;
+  StringRef Name;
+  StringRef UniqueName;
+
+  uint64_t MemberCount = 0;
+  uint64_t Size = 0;
+};
+
+// LF_TAGGED_UNION_CASE
+class TaggedUnionCaseRecord : public TypeRecord {
+public:
+  TaggedUnionCaseRecord() = default;
+  explicit TaggedUnionCaseRecord(TypeRecordKind Kind) : TypeRecord(Kind) {}
+
+  /// Number of lo/hi pairs found in `TagList`.
+  uint16_t TagCount = 0;
+
+  /// Index to a list (LF_FIELDLIST?) containing a sequence of LF_TAG_RANGE.
+  TypeIndex TagList;
+
+  uint16_t Padding1 = 0;
+  uint32_t Padding2 = 0;
+
+  /// The type contained in this case.
+  TypeIndex Type;
+
+  /// Offset of the tag inside the UDT in bytes.
+  uint64_t TagOffset = 0;
+
+  /// Mask to apply when reading the tag. `0` indicates no mask.
+  // FIXME: use APInt.
+  uint64_t TagMask = 0;
+};
+
+// LF_TUCASE
+class TUCaseRecord : public TypeRecord {
+public:
+  TUCaseRecord() = default;
+  explicit TUCaseRecord(TypeRecordKind Kind) : TypeRecord(Kind) {}
+
+  TypeIndex getType() const { return Type; }
+
+  uint16_t Unknown = 0;
+  TypeIndex Type;
+  StringRef Name;
+};
+
+// LF_TAG_RANGE
+class TagRangeRecord : public TypeRecord {
+public:
+  TagRangeRecord() = default;
+  explicit TagRangeRecord(TypeRecordKind Kind) : TypeRecord(Kind) {}
+
+  /// Lower bound of the tag's range (inclusive).
+  // FIXME: Use APInt.
+  uint64_t Low = 0;
+
+  /// Upper bound of the tag's rang (inclusive).
+  // FIXME: Use APInt.
+  uint64_t High = 0;
+};
+
+// LF_RANGELIST
+class RangeListRecord : public TypeRecord {
+public:
+  RangeListRecord() = default;
+  explicit RangeListRecord(TypeRecordKind Kind) : TypeRecord(Kind) {}
+  explicit RangeListRecord(ArrayRef<TagRangeRecord> Ranges)
+      : TypeRecord(TypeRecordKind::RangeList), Ranges(Ranges) {}
+
+  ArrayRef<TagRangeRecord> getRanges() const { return Ranges; }
+
+  std::vector<TagRangeRecord> Ranges;
+};
+
 // LF_ENUM
 class EnumRecord : public TagRecord {
 public:

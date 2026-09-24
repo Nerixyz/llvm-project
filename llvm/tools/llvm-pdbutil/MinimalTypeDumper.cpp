@@ -371,6 +371,40 @@ Error MinimalTypeDumpVisitor::visitKnownRecord(CVType &CVR,
   return Error::success();
 }
 
+Error MinimalTypeDumpVisitor::visitKnownRecord(CVType &CVR,
+                                               TaggedUnionRecord &Union) {
+  P.format(" `{0}`", Union.Name);
+  if (Union.hasUniqueName())
+    P.formatLine("unique name: `{0}`", Union.UniqueName);
+  P.formatLine("field list: {0}", Union.FieldList);
+  P.formatLine("options: {0}, sizeof {1}",
+               formatClassOptions(
+                   P.getIndentLevel(),
+                   static_cast<ClassOptions>(to_underlying(Union.Options)),
+                   Stream, CurrentTypeIndex),
+               Union.Size);
+  return Error::success();
+}
+
+Error MinimalTypeDumpVisitor::visitKnownRecord(CVType &CVR,
+                                               TaggedUnionCaseRecord &TUC) {
+  P.formatLine("tag count: {0}, tag list: {1}", TUC.TagCount, TUC.TagList);
+  if (TUC.Padding1 != 0)
+    P.format("unknown1: {0:x} ", TUC.Padding1);
+  if (TUC.Padding2 != 0)
+    P.format("unknown2: {0:x}", TUC.Padding2);
+  P.formatLine("type = {0}, tag offset: {1}, tag mask: {2:x}", TUC.Type,
+               TUC.TagOffset, TUC.TagMask);
+  return Error::success();
+}
+
+Error MinimalTypeDumpVisitor::visitKnownRecord(CVType &CVR,
+                                               RangeListRecord &List) {
+  for (auto &R : List.Ranges)
+    P.formatLine("- Range [low = {0:x}, high = {1:x}]", R.Low, R.High);
+  return Error::success();
+}
+
 Error MinimalTypeDumpVisitor::visitKnownRecord(CVType &CVR, EnumRecord &Enum) {
   P.format(" `{0}`", Enum.Name);
   if (Enum.hasUniqueName())
@@ -605,5 +639,19 @@ Error MinimalTypeDumpVisitor::visitKnownMember(CVMemberRecord &CVR,
 Error MinimalTypeDumpVisitor::visitKnownMember(CVMemberRecord &CVR,
                                                VFPtrRecord &VFP) {
   P.format(" type = {0}", VFP.Type);
+  return Error::success();
+}
+
+Error MinimalTypeDumpVisitor::visitKnownMember(CVMemberRecord &CVR,
+                                               TUCaseRecord &TUC) {
+  if (TUC.Unknown != 0)
+    P.format(" unknown = {0}", TUC.Unknown);
+  P.format(" type = {0}, name = {1}", TUC.Type, TUC.Name);
+  return Error::success();
+}
+
+Error MinimalTypeDumpVisitor::visitKnownMember(CVMemberRecord &CVR,
+                                               TagRangeRecord &TR) {
+  P.format(" low = {0:x}, high = {1:x}", TR.Low, TR.High);
   return Error::success();
 }

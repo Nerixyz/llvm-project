@@ -39,6 +39,21 @@ static uint32_t getHashForUdt(const TagRecord &Rec,
   return hashBufferV8(FullRecord);
 }
 
+static uint32_t getHashForUdt(const TaggedUnionRecord &Rec,
+                              ArrayRef<uint8_t> FullRecord) {
+  ClassOptions Opts = Rec.getOptions();
+  bool ForwardRef = bool(Opts & ClassOptions::ForwardReference);
+  bool Scoped = bool(Opts & ClassOptions::Scoped);
+  bool HasUniqueName = bool(Opts & ClassOptions::HasUniqueName);
+  bool IsAnon = HasUniqueName && isAnonymous(Rec.getName());
+
+  if (!ForwardRef && !Scoped && !IsAnon)
+    return hashStringV1(Rec.getName());
+  if (!ForwardRef && HasUniqueName && !IsAnon)
+    return hashStringV1(Rec.getUniqueName());
+  return hashBufferV8(FullRecord);
+}
+
 template <typename T>
 static Expected<uint32_t> getHashForUdt(const CVType &Rec) {
   T Deserialized;
@@ -112,6 +127,8 @@ Expected<uint32_t> llvm::pdb::hashTypeRecord(const CVType &Rec) {
     return getHashForUdt<UnionRecord>(Rec);
   case LF_ENUM:
     return getHashForUdt<EnumRecord>(Rec);
+  case LF_TAGGED_UNION:
+    return getHashForUdt<TaggedUnionRecord>(Rec);
 
   case LF_UDT_SRC_LINE:
     return getSourceLineHash<UdtSourceLineRecord>(Rec);
