@@ -45,6 +45,7 @@ using namespace llvm::yaml;
 
 LLVM_YAML_IS_SEQUENCE_VECTOR(OneMethodRecord)
 LLVM_YAML_IS_SEQUENCE_VECTOR(VFTableSlotKind)
+LLVM_YAML_IS_SEQUENCE_VECTOR(TagRangeRecord)
 LLVM_YAML_IS_FLOW_SEQUENCE_VECTOR(TypeIndex)
 
 LLVM_YAML_DECLARE_SCALAR_TRAITS(TypeIndex, QuotingType::None)
@@ -70,6 +71,7 @@ LLVM_YAML_DECLARE_BITSET_TRAITS(MethodOptions)
 
 LLVM_YAML_DECLARE_MAPPING_TRAITS(OneMethodRecord)
 LLVM_YAML_DECLARE_MAPPING_TRAITS(MemberPointerInfo)
+LLVM_YAML_DECLARE_MAPPING_TRAITS(TagRangeRecord)
 
 namespace llvm {
 namespace CodeViewYAML {
@@ -554,6 +556,11 @@ void MappingTraits<OneMethodRecord>::mapping(IO &io, OneMethodRecord &Record) {
   io.mapRequired("Name", Record.Name);
 }
 
+void MappingTraits<TagRangeRecord>::mapping(IO &IO, TagRangeRecord &Record) {
+  IO.mapRequired("Low", Record.Low);
+  IO.mapRequired("High", Record.High);
+}
+
 namespace llvm {
 namespace CodeViewYAML {
 namespace detail {
@@ -576,6 +583,29 @@ template <> void LeafRecordImpl<UnionRecord>::map(IO &IO) {
   IO.mapRequired("Name", Record.Name);
   IO.mapRequired("UniqueName", Record.UniqueName);
   IO.mapRequired("Size", Record.Size);
+}
+
+template <> void LeafRecordImpl<TaggedUnionRecord>::map(IO &IO) {
+  IO.mapRequired("Options", Record.Options);
+  IO.mapRequired("FieldList", Record.FieldList);
+  IO.mapRequired("MemberCount", Record.MemberCount);
+  IO.mapRequired("Size", Record.Size);
+  IO.mapRequired("Name", Record.Name);
+  IO.mapRequired("UniqueName", Record.UniqueName);
+}
+
+template <> void LeafRecordImpl<TaggedUnionCaseRecord>::map(IO &IO) {
+  IO.mapRequired("TagCount", Record.TagCount);
+  IO.mapRequired("TagList", Record.TagList);
+  IO.mapOptional("Unknown1", Record.Padding1);
+  IO.mapOptional("Unknown2", Record.Padding2);
+  IO.mapRequired("Type", Record.Type);
+  IO.mapRequired("TagOffset", Record.TagOffset);
+  IO.mapOptional("TagMask", Record.TagMask);
+}
+
+template <> void LeafRecordImpl<RangeListRecord>::map(IO &IO) {
+  IO.mapRequired("Ranges", Record.Ranges);
 }
 
 template <> void LeafRecordImpl<EnumRecord>::map(IO &IO) {
@@ -707,6 +737,16 @@ template <> void MemberRecordImpl<VirtualBaseClassRecord>::map(IO &IO) {
 
 template <> void MemberRecordImpl<ListContinuationRecord>::map(IO &IO) {
   IO.mapRequired("ContinuationIndex", Record.ContinuationIndex);
+}
+
+template <> void MemberRecordImpl<TUCaseRecord>::map(IO &IO) {
+  IO.mapOptional("SomeFlags", Record.Unknown);
+  IO.mapRequired("Type", Record.Type);
+  IO.mapRequired("Name", Record.Name);
+}
+
+template <> void MemberRecordImpl<TagRangeRecord>::map(IO &IO) {
+  MappingTraits<TagRangeRecord>::mapping(IO, Record);
 }
 
 } // end namespace detail

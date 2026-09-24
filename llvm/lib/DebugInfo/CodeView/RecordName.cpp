@@ -122,6 +122,21 @@ Error TypeNameComputer::visitKnownRecord(CVType &CVR, EnumRecord &Enum) {
   return Error::success();
 }
 
+Error TypeNameComputer::visitKnownRecord(CVType &CVR,
+                                         TaggedUnionRecord &Union) {
+  Name = Union.Name;
+  return Error::success();
+}
+
+Error TypeNameComputer::visitKnownRecord(CVType &CVR,
+                                         TaggedUnionCaseRecord &Case) {
+  return Error::success();
+}
+
+Error TypeNameComputer::visitKnownRecord(CVType &CVR, RangeListRecord &List) {
+  return Error::success();
+}
+
 Error TypeNameComputer::visitKnownRecord(CVType &CVR, ArrayRecord &AT) {
   Name = AT.getName();
   return Error::success();

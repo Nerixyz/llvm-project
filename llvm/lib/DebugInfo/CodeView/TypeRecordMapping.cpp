@@ -142,6 +142,32 @@ struct MapOneMethodRecord {
 private:
   bool IsFromOverloadList;
 };
+
+struct MapTagRangeRecord {
+  explicit MapTagRangeRecord(bool IsFromRangeList)
+      : IsFromRangeList(IsFromRangeList) {}
+
+  Error operator()(CodeViewRecordIO &IO, TagRangeRecord &Range) const {
+    if (IsFromRangeList) {
+      uint16_t Type = LF_TAG_RANGE;
+      error(IO.mapInteger(Type));
+      if (Type != LF_TAG_RANGE)
+        return createStringError(
+            "expected range item to start with LF_TAG_RANGE");
+    }
+    error(IO.mapEncodedInteger(Range.Low));
+    error(IO.mapEncodedInteger(Range.High));
+
+    if (IsFromRangeList && IO.isReading())
+      error(IO.skipPadding());
+
+    return Error::success();
+  }
+
+private:
+  bool IsFromRangeList;
+};
+
 } // namespace
 
 // Computes a string representation of a hash of the specified name, suitable
@@ -503,6 +529,44 @@ Error TypeRecordMapping::visitKnownRecord(CVType &CVR, EnumRecord &Record) {
   return Error::success();
 }
 
+Error TypeRecordMapping::visitKnownRecord(CVType &CVR,
+                                          TaggedUnionRecord &Record) {
+  std::string PropertiesNames = getFlagNames(
+      IO, static_cast<uint16_t>(Record.Options), getClassOptionNames());
+  uint32_t Options = llvm::to_underlying(Record.Options);
+  error(IO.mapInteger(Options, "Properties" + PropertiesNames));
+  if (IO.isReading())
+    Record.Options = static_cast<ClassOptions>(Options);
+
+  error(IO.mapInteger(Record.FieldList, "FieldList"));
+  error(IO.mapEncodedInteger(Record.MemberCount, "MemberCount"));
+  error(IO.mapEncodedInteger(Record.Size, "SizeOf"));
+  error(mapNameAndUniqueName(IO, Record.Name, Record.UniqueName,
+                             Record.hasUniqueName()));
+
+  return Error::success();
+}
+
+Error TypeRecordMapping::visitKnownRecord(CVType &CVR,
+                                          TaggedUnionCaseRecord &Record) {
+  error(IO.mapInteger(Record.TagCount, "TagCount"));
+  error(IO.mapInteger(Record.TagList, "TagList"));
+  error(IO.mapInteger(Record.Padding1, "Padding1"));
+  error(IO.mapInteger(Record.Padding2, "Padding2"));
+  error(IO.mapInteger(Record.Type, "Type"));
+  error(IO.mapEncodedInteger(Record.TagOffset, "TagOffset"));
+  error(IO.mapEncodedInteger(Record.TagMask, "TagMask"));
+
+  return Error::success();
+}
+
+Error TypeRecordMapping::visitKnownRecord(CVType &CVR,
+                                          RangeListRecord &Record) {
+  error(IO.mapVectorTail(Record.Ranges, MapTagRangeRecord(true), "Ranges"));
+
+  return Error::success();
+}
+
 Error TypeRecordMapping::visitKnownRecord(CVType &CVR, BitFieldRecord &Record) {
   error(IO.mapInteger(Record.Type, "Type"));
   error(IO.mapInteger(Record.BitSize, "BitSize"));
@@ -684,6 +748,20 @@ Error TypeRecordMapping::visitKnownMember(CVMemberRecord &CVR,
   error(IO.mapStringZ(Record.Name, "Name"));
 
   return Error::success();
+}
+
+Error TypeRecordMapping::visitKnownMember(CVMemberRecord &CVR,
+                                          TUCaseRecord &Record) {
+  error(IO.mapInteger(Record.Unknown, "Unknown"));
+  error(IO.mapInteger(Record.Type, "Type"));
+  error(IO.mapStringZ(Record.Name, "Name"));
+
+  return Error::success();
+}
+
+Error TypeRecordMapping::visitKnownMember(CVMemberRecord &CVR,
+                                          TagRangeRecord &Record) {
+  return MapTagRangeRecord{false}(IO, Record);
 }
 
 Error TypeRecordMapping::visitKnownMember(CVMemberRecord &CVR,
