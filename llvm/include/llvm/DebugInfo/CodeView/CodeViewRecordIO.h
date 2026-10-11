@@ -117,7 +117,7 @@ public:
     return mapWriteInteger(Value, Comment);
   }
 
-  Error mapWriteInt128(const APSInt &Value, const Twine &Comment = "");
+  LLVM_ABI Error mapWriteInt128(const APSInt &Value, const Twine &Comment = "");
 
   template <typename Trunc, typename T>
   Error mapTruncInteger(T &Value, const Twine &Comment = "") {
