@@ -378,8 +378,7 @@ static cl::opt<bool>
     DebugSkeletonCu("debug-skeleton-cu",
                     cl::desc("prints out offsets for abbrev and debug_info of "
                              "Skeleton CUs that get patched."),
-                    cl::ZeroOrMore, cl::Hidden, cl::init(false),
-                    cl::cat(BoltCategory));
+                    cl::Hidden, cl::init(false), cl::cat(BoltCategory));
 
 static cl::opt<unsigned> BatchSize(
     "cu-processing-batch-size",
@@ -589,40 +588,28 @@ static SmallVector<SmallVector<DWARFUnit *>> partitionCUs(DWARFContext &DwCtx,
         }
     if (RefAddrAbbrevs.empty())
       continue;
-    // Track CUs involved in cross-CU references via DW_FORM_ref_addr.
-    uint64_t DIEOffset = CU->getOffset() + CU->getHeaderSize();
-    const uint64_t NextCUOffset = CU->getNextUnitOffset();
-    DWARFDataExtractor DebugInfoData = CU->getDebugInfoExtractor();
-    DWARFDebugInfoEntry DIEEntry;
-    // extractFast() here only attributes are inspected here, so ParentIdx is
-    // passed as a dummy value.
-    while (DIEOffset < NextCUOffset) {
-      if (!DIEEntry.extractFast(*CU, &DIEOffset, DebugInfoData, NextCUOffset,
-                                /*ParentIdx=*/0))
-        break;
-      const DWARFAbbreviationDeclaration *Abbrev =
-          DIEEntry.getAbbreviationDeclarationPtr();
-      if (Abbrev) {
-        if (RefAddrAbbrevs.count(Abbrev)) {
-          DWARFDie Die(CU, &DIEEntry);
-          for (const DWARFAttribute &Attr : Die.attributes()) {
-            if (Attr.Value.getForm() != dwarf::DW_FORM_ref_addr)
-              continue;
-            auto OptRef = Attr.Value.getAsDebugInfoReference();
-            if (!OptRef)
-              continue;
-            DWARFUnit *TargetCU = DwCtx.getUnitForOffset(*OptRef);
-            if (!TargetCU || TargetCU == CU)
-              continue;
-            if (CrossRefSet.insert(CU).second)
-              EC.insert(CU);
-            if (CrossRefSet.insert(TargetCU).second)
-              EC.insert(TargetCU);
-            EC.unionSets(CU, TargetCU);
-          }
-        }
+    // Track CUs involved in cross-CU references via DW_FORM_ref_addr. Only DIE
+    // attributes are inspected, so forEachDIEInUnit streams the DIEs without
+    // materializing the unit's full DIE vector.
+    forEachDIEInUnit(*CU, [&](const DWARFDie &Die) {
+      if (!RefAddrAbbrevs.count(Die.getAbbreviationDeclarationPtr()))
+        return;
+      for (const DWARFAttribute &Attr : Die.attributes()) {
+        if (Attr.Value.getForm() != dwarf::DW_FORM_ref_addr)
+          continue;
+        auto OptRef = Attr.Value.getAsDebugInfoReference();
+        if (!OptRef)
+          continue;
+        DWARFUnit *TargetCU = DwCtx.getUnitForOffset(*OptRef);
+        if (!TargetCU || TargetCU == CU)
+          continue;
+        if (CrossRefSet.insert(CU).second)
+          EC.insert(CU);
+        if (CrossRefSet.insert(TargetCU).second)
+          EC.insert(TargetCU);
+        EC.unionSets(CU, TargetCU);
       }
-    }
+    });
   }
 
   DenseMap<DWARFUnit *, SmallVector<DWARFUnit *>> MembersByLeader;
@@ -1039,6 +1026,11 @@ void DWARFRewriter::updateDebugInfo() {
       finalizeTypeSections(DIEBlder, *Streamer, GDBIndexSection);
   SmallVector<SmallVector<DWARFUnit *>> PartVec =
       partitionCUs(*BC.DwCtx, CUSize);
+  // Buckets below run in parallel, and with a .dwp package they all read the
+  // same split DWARF context. Create that context now to avoid a race
+  // (note this is a DWP-only issue, DWOs are safe since each thread operate
+  // on its own DWARF context).
+  BC.openSharedDWOContext();
   const unsigned int ThreadCount =
       std::min(opts::DebugThreadCount, opts::ThreadCount);
   llvm::ThreadPoolInterface &ThreadPool =
@@ -1073,6 +1065,9 @@ void DWARFRewriter::updateDebugInfo() {
     BucketDIEBlders[Idx].reset();
     LocalWriters[Idx].RngListsWriter.reset();
     LocalWriters[Idx].LegacyRangesWriter.reset();
+    for (DWARFUnit *CU : SortedCUs)
+      if (std::optional<uint64_t> DWOId = CU->getDWOId())
+        BC.releaseDWOCU(*DWOId);
   };
 
   for (size_t I = 0; I < TotalTasks; ++I) {
@@ -1136,8 +1131,12 @@ void DWARFRewriter::updateUnitDebugInfo(
     dwarf::Attribute AttrLowPC = dwarf::DW_AT_low_pc;
     dwarf::Form FormLowPC = dwarf::DW_FORM_addr;
     dwarf::Attribute AttrHighPC = dwarf::DW_AT_high_pc;
-    dwarf::Form FormHighPC = dwarf::DW_FORM_data4;
-    const uint32_t Size = HighPC - LowPC;
+    // DW_AT_high_pc holding an offset from DW_AT_low_pc is a DWARF 4 addition;
+    // before that the attribute is always address.
+    dwarf::Form FormHighPC =
+        Unit.getVersion() >= 4 ? dwarf::DW_FORM_data4 : dwarf::DW_FORM_addr;
+    // Computed before LowPC is possibly replaced by an address table index.
+    const uint64_t Size = HighPC - LowPC;
     // Whatever was generated is not low_pc/high_pc, so will reset to
     // default for size 1.
     if (!LowPCVal || !HighPCVal) {
@@ -1156,15 +1155,20 @@ void DWARFRewriter::updateUnitDebugInfo(
         FormLowPC == dwarf::DW_FORM_GNU_addr_index)
       LowPC = AddressWriter.getIndexFromAddress(LowPC, Unit);
 
+    // The value has to match the class of the form it is written under.
+    const uint64_t HighPCEncoded =
+        FormHighPC == dwarf::DW_FORM_addr ? HighPC : Size;
+
     if (LowPCVal)
       DIEBldr.replaceValue(Die, AttrLowPC, FormLowPC, DIEInteger(LowPC));
     else
       DIEBldr.addValue(Die, AttrLowPC, FormLowPC, DIEInteger(LowPC));
     if (HighPCVal) {
-      DIEBldr.replaceValue(Die, AttrHighPC, FormHighPC, DIEInteger(Size));
+      DIEBldr.replaceValue(Die, AttrHighPC, FormHighPC,
+                           DIEInteger(HighPCEncoded));
     } else {
       DIEBldr.deleteValue(Die, dwarf::DW_AT_ranges);
-      DIEBldr.addValue(Die, AttrHighPC, FormHighPC, DIEInteger(Size));
+      DIEBldr.addValue(Die, AttrHighPC, FormHighPC, DIEInteger(HighPCEncoded));
     }
   };
 
@@ -1245,10 +1249,18 @@ void DWARFRewriter::updateUnitDebugInfo(
       DIEValue LowPCVal = Die->findAttribute(dwarf::DW_AT_low_pc);
       DIEValue HighPCVal = Die->findAttribute(dwarf::DW_AT_high_pc);
       if (FunctionRanges.empty()) {
-        if (LowPCVal && HighPCVal)
-          FunctionRanges.push_back({0, HighPCVal.getDIEInteger().getValue()});
-        else
-          FunctionRanges.push_back({0, 1});
+        // There is no output range for this DIE, so point it at address 0 and
+        // keep its original size. The stored DW_AT_high_pc is that size only
+        // for non-address forms; for DW_FORM_addr it is the end address.
+        uint64_t OriginalSize = 1;
+        if (LowPCVal && HighPCVal) {
+          if (HighPCVal.getForm() != dwarf::DW_FORM_addr)
+            OriginalSize = HighPCVal.getDIEInteger().getValue();
+          else if (LowPCVal.getForm() == dwarf::DW_FORM_addr)
+            OriginalSize = HighPCVal.getDIEInteger().getValue() -
+                           LowPCVal.getDIEInteger().getValue();
+        }
+        FunctionRanges.push_back({0, OriginalSize});
       }
 
       if (FunctionRanges.size() == 1 && !opts::AlwaysConvertToRanges) {
@@ -2262,15 +2274,7 @@ void DWARFRewriter::writeDWOFiles(
     const std::string &DWOName, DebugLocWriter &LocWriter,
     DebugStrOffsetsWriter &StrOffstsWriter, DebugStrWriter &StrWriter,
     DebugRangesSectionWriter &TempRangesSectionWriter) {
-  // Setup DWP code once.
-  DWARFContext *DWOCtx = BC.getDWOContext();
   const uint64_t DWOId = *CU.getDWOId();
-  const DWARFUnitIndex *CUIndex = nullptr;
-  bool IsDWP = false;
-  if (DWOCtx) {
-    CUIndex = &DWOCtx->getCUIndex();
-    IsDWP = !CUIndex->getRows().empty();
-  }
 
   // Skipping CUs that we failed to load.
   std::optional<DWARFUnit *> DWOCU = BC.getDWOCU(DWOId);
@@ -2296,9 +2300,9 @@ void DWARFRewriter::writeDWOFiles(
   std::unique_ptr<ToolOutputFile> TempOut =
       std::make_unique<ToolOutputFile>(AbsolutePath, EC, sys::fs::OF_None);
 
-  const DWARFUnitIndex::Entry *CUDWOEntry = nullptr;
-  if (IsDWP)
-    CUDWOEntry = CUIndex->getFromHash(DWOId);
+  const DWARFUnitIndex::Entry *CUDWOEntry =
+      !BC.usesDWP() ? nullptr
+                    : (*DWOCU)->getContext().getCUIndex().getFromHash(DWOId);
 
   const object::ObjectFile *File =
       (*DWOCU)->getContext().getDWARFObj().getFile();
@@ -2336,7 +2340,7 @@ void DWARFRewriter::writeDWOFiles(
       continue;
     Expected<StringRef> ContentsExp = Section.getContents();
     assert(ContentsExp && "Invalid contents.");
-    if (IsDWP && SectionName == "debug_str.dwo") {
+    if (BC.usesDWP() && SectionName == "debug_str.dwo") {
       if (StrWriter.isInitialized())
         StrDWOContent = StrWriter.getBufferStr();
       else
@@ -2347,7 +2351,7 @@ void DWARFRewriter::writeDWOFiles(
             (*DWOCU)->getContext(), SectionName, *ContentsExp, KnownSections,
             *Streamer, *this, CUDWOEntry, DWOId, OutputData, RangeListssWriter,
             LocWriter, StrOffstsWriter, StrWriter, OverridenSections)) {
-      if (IsDWP && SectionName == "debug_str_offsets.dwo") {
+      if (BC.usesDWP() && SectionName == "debug_str_offsets.dwo") {
         StrOffsetsContent = *OutData;
         continue;
       }
@@ -2355,7 +2359,7 @@ void DWARFRewriter::writeDWOFiles(
     }
   }
 
-  if (IsDWP) {
+  if (BC.usesDWP()) {
     // Handling both .debug_str.dwo and .debug_str_offsets.dwo concurrently. In
     // the original DWP, .debug_str is a deduplicated global table, and the
     // .debug_str.dwo slice for a single CU needs to be extracted according to

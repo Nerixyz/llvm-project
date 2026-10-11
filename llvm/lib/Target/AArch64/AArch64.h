@@ -76,6 +76,7 @@ FunctionPass *createAArch64PTrueCoalescingLegacyPass();
 FunctionPass *createAArch64CleanupLocalDynamicTLSPass();
 
 FunctionPass *createAArch64CollectLOHPass();
+Pass *createAArch64PredicateAsCounterLoopRewritesPass();
 FunctionPass *createSMEPeepholeOptPass();
 FunctionPass *createMachineSMEABIPass(CodeGenOptLevel);
 FunctionPass *createAArch64SRLTDefineSuperRegsLegacyPass();
@@ -167,8 +168,8 @@ void initializeAArch64A57FPLoadBalancingLegacyPass(PassRegistry &);
 void initializeAArch64AdvSIMDScalarLegacyPass(PassRegistry &);
 void initializeAArch64AsmPrinterPass(PassRegistry &);
 void initializeAArch64PointerAuthLegacyPass(PassRegistry &);
+void initializeAArch64PredicateAsCounterLoopRewritesPass(PassRegistry &);
 void initializeAArch64BranchTargetsLegacyPass(PassRegistry &);
-void initializeAArch64CFIFixupPass(PassRegistry&);
 void initializeAArch64CollectLOHLegacyPass(PassRegistry &);
 void initializeAArch64CompressJumpTablesLegacyPass(PassRegistry &);
 void initializeAArch64CondBrTuningPass(PassRegistry &);
@@ -206,11 +207,12 @@ void initializeAArch64SRLTDefineSuperRegsLegacyPass(PassRegistry &);
 void initializeSVEShuffleOptsPass(PassRegistry &);
 void initializeAArch64Arm64ECCallLoweringPass(PassRegistry &);
 
-class SVEShuffleOptsPass : public OptionalPassInfoMixin<SVEShuffleOptsPass> {
+class AArch64SVEShuffleOptsPass
+    : public OptionalPassInfoMixin<AArch64SVEShuffleOptsPass> {
   const AArch64TargetMachine &TM;
 
 public:
-  explicit SVEShuffleOptsPass(const AArch64TargetMachine &TM) : TM(TM) {}
+  explicit AArch64SVEShuffleOptsPass(const AArch64TargetMachine &TM) : TM(TM) {}
   LLVM_ABI PreservedAnalyses run(Loop &L, LoopAnalysisManager &AM,
                                  LoopStandardAnalysisResults &AR,
                                  LPMUpdater &U);
